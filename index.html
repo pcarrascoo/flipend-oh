@@ -105,8 +105,8 @@ body { background:var(--bg); color:var(--text); font-family:'Courier New',monosp
 <div class="screen active" id="screen-nick">
   <div class="logo">FLIPEND'OH</div>
   <div class="tagline">El juego del trazo</div>
-  <p class="nick-hint">Elige tu nombre de jugador.<br>Maximo 5 letras. <strong>No podras cambiarlo.</strong></p>
-  <input id="nick-input" class="nick-input" maxlength="5" placeholder="AAA" autocomplete="off" spellcheck="false">
+  <p class="nick-hint">Elige tu nombre de jugador.<br>Maximo 3 letras. <strong>No podras cambiarlo.</strong></p>
+  <input id="nick-input" class="nick-input" maxlength="3" placeholder="AAA" autocomplete="off" spellcheck="false">
   <p class="nick-hint" style="margin-top:8px">Solo letras. Se vera asi en el ranking.</p>
   <button class="btn btn-primary" id="btn-set-nick">CONFIRMAR</button>
 </div>
@@ -495,7 +495,7 @@ function startDisruptions(disruptions,rng){
 
 // SCREENS
 function showScreen(id){document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));document.getElementById(id).classList.add('active');}
-function goModes(){clearDisruptions();updateModeScreen();showScreen('screen-modes');}
+function goModes(){clearDisruptions();drawCanvas.style.pointerEvents='auto';submitted=false;updateModeScreen();showScreen('screen-modes');}
 function updateModeScreen(){
   document.getElementById('nick-display').textContent=state.nick;
   document.getElementById('daily-info').textContent=state.today;
@@ -512,7 +512,7 @@ function updateModeScreen(){
 }
 
 // GAME FLOW
-let countdownTimer=null, drawTimer=null;
+let countdownTimer=null, drawTimer=null, submitted=false;
 
 function handleModeClick(mode){
   if(state.scores[mode]!==null) showSavedResult(mode);
@@ -548,25 +548,46 @@ function startMode(mode){
   countdownTimer=setInterval(()=>{t--;document.getElementById('countdown').textContent=t>0?t:'YA!';if(t<=0){clearInterval(countdownTimer);clearDisruptions();setTimeout(startDrawPhase,500);}},1000);
 }
 function startDrawPhase(){
-  clearDraw(); resizeCanvases();
+  submitted=false; clearDraw(); resizeCanvases();
   const cx=drawCanvas.width/2,cy=drawCanvas.height/2,r=state.shapeParams.size*Math.min(cx,cy);
   state.refPts=shapePoints(state.shapeParams.shape,cx,cy,r,state.shapeParams.rotation);
   showScreen('screen-draw'); startDrawTimer();
 }
 function startDrawTimer(){
-  if(drawTimer) clearInterval(drawTimer);
-  const total=state.currentMode==='extreme'?3:5; let rem=total;
+  if(drawTimer) clearTimeout(drawTimer);
+  const totalMs=(state.currentMode==='extreme'?3:5)*1000;
+  const startTime=Date.now();
   const numEl=document.getElementById('draw-timer-num'),barEl=document.getElementById('draw-timer-bar');
   barEl.style.transition='none'; barEl.style.width='100%'; barEl.style.background='var(--accent)';
-  numEl.style.color='var(--accent)'; numEl.textContent=rem;
+  numEl.style.color='var(--accent)'; numEl.textContent=state.currentMode==='extreme'?3:5;
   barEl.getBoundingClientRect();
-  barEl.style.transition='width '+total+'s linear'; barEl.style.width='0%';
-  drawTimer=setInterval(()=>{rem--;numEl.textContent=rem>0?rem:'X';if(rem<=1){numEl.style.color='var(--ec)';barEl.style.background='var(--ec)';}if(rem<=0){clearInterval(drawTimer);drawTimer=null;submitDraw();}},1000);
+  barEl.style.transition='width '+(totalMs/1000)+'s linear'; barEl.style.width='0%';
+  function tick(){
+    const rem=Math.max(0,totalMs-(Date.now()-startTime));
+    const remS=rem/1000;
+    if(rem<=0){numEl.textContent='X';drawTimer=null;submitDraw();return;}
+    if(remS>1){
+      numEl.textContent=Math.ceil(remS);
+      numEl.style.color='var(--accent)';
+      drawTimer=setTimeout(tick,80);
+    } else {
+      numEl.textContent=remS.toFixed(1);
+      numEl.style.color='var(--ec)';
+      barEl.style.background='var(--ec)';
+      drawTimer=setTimeout(tick,40);
+    }
+  }
+  drawTimer=setTimeout(tick,80);
 }
-function stopDrawTimer(){if(drawTimer){clearInterval(drawTimer);drawTimer=null;}}
+function stopDrawTimer(){if(drawTimer){clearTimeout(drawTimer);drawTimer=null;}}
 async function submitDraw(){
+  if(submitted) return;
+  submitted=true;
   stopDrawTimer();
-  if(state.drawnPts.length<5){showToast('Dibuja algo primero!');return;}
+  drawCanvas.style.pointerEvents='none';
+  if(state.drawnPts.length<5){showToast('Dibuja algo primero!');submitted=false;drawCanvas.style.pointerEvents='auto';return;}
+  document.getElementById('draw-timer-num').textContent='...';
+  await new Promise(r=>setTimeout(r,20));
   const score=scorePaths(state.refPts,state.drawnPts);
   saveScore(state.currentMode,score);
   await pushScore(state.currentMode,score);
@@ -652,7 +673,7 @@ function showToast(msg){
 }
 
 // NICK SETUP
-document.getElementById('nick-input').addEventListener('input',function(){this.value=this.value.replace(/[^A-Za-z]/g,'').toUpperCase().slice(0,5);});
+document.getElementById('nick-input').addEventListener('input',function(){this.value=this.value.replace(/[^A-Za-z]/g,'').toUpperCase().slice(0,3);});
 document.getElementById('btn-set-nick').addEventListener('click',function(){
   const val=document.getElementById('nick-input').value.trim().toUpperCase();
   if(val.length<2){showToast('Minimo 2 letras');return;}
