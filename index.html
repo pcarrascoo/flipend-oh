@@ -86,7 +86,7 @@ body { background:var(--bg); color:var(--text); font-family:'Courier New',monosp
   <p class="nick-hint">Elige tu nombre de jugador.<br>Maximo 3 letras. <strong>No podras cambiarlo.</strong></p>
   <input id="nick-input" class="nick-input" maxlength="3" placeholder="AAA" autocomplete="off" spellcheck="false">
   <p class="nick-hint" style="margin-top:8px">Solo letras. Se vera asi en el ranking.</p>
-  <button class="btn btn-primary" id="btn-set-nick">CONFIRMAR</button>
+  <button class="btn btn-primary" id="btn-set-nick" onclick="confirmNick()">CONFIRMAR</button>
 </div>
 
 <div class="screen" id="screen-modes">
@@ -543,12 +543,15 @@ async function renderRankTab(mode){
 
 function showToast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2200);}
 
-document.getElementById('nick-input').addEventListener('input',function(){this.value=this.value.replace(/[^A-Za-z]/g,'').toUpperCase().slice(0,3);});
-document.getElementById('btn-set-nick').addEventListener('click',function(){
+function confirmNick(){
   const val=document.getElementById('nick-input').value.trim().toUpperCase();
   if(val.length<2){showToast('Minimo 2 letras');return;}
   store.setItem(LS_NICK,val);state.nick=val;goModes();
+}
+document.getElementById('nick-input').addEventListener('input',function(){
+  this.value=this.value.replace(/[^A-Za-z]/g,'').toUpperCase().slice(0,3);
 });
+document.getElementById('btn-set-nick').addEventListener('click', confirmNick);
 
 window.addEventListener('resize',resizeCanvases);
 resizeCanvases();loadState();initFirebase();
@@ -556,4 +559,4 @@ if(state.nick)goModes();else showScreen('screen-nick');
 </script>
 </body>
 </html>
-<!-- v2 -->
+<!-- v3 -->
