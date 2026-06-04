@@ -460,8 +460,6 @@ function stopDrawTimer(){if(drawTimer){clearTimeout(drawTimer);drawTimer=null;}}
 async function submitDraw(){
   if(submitted)return;submitted=true;stopDrawTimer();drawCanvas.style.pointerEvents='none';
   if(state.drawnPts.length<5){showToast('Dibuja algo primero!');submitted=false;drawCanvas.style.pointerEvents='auto';return;}
-  document.getElementById('draw-timer-num').textContent='...';
-  await new Promise(r=>setTimeout(r,20));
   const score=scorePaths(state.refPts,state.drawnPts);
   saveScore(state.currentMode,score);await pushScore(state.currentMode,score);showResult(score);
 }
