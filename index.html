@@ -191,11 +191,14 @@ body { background:var(--bg); color:var(--text); font-family:'Courier New',monosp
 <script>
 // FIREBASE CONFIG
 const FIREBASE_CONFIG = {
-  apiKey:"TU_API_KEY", authDomain:"TU_PROJECT.firebaseapp.com",
-  projectId:"TU_PROJECT_ID", storageBucket:"TU_PROJECT.appspot.com",
-  messagingSenderId:"TU_SENDER_ID", appId:"TU_APP_ID"
+  apiKey:"AIzaSyD_E3XwUbJ8bD1Su8IXNMuO-QiKxol4GsI",
+  authDomain:"flippend-oh.firebaseapp.com",
+  projectId:"flippend-oh",
+  storageBucket:"flippend-oh.firebasestorage.app",
+  messagingSenderId:"267909813458",
+  appId:"1:267909813458:web:78d0412d51d0d25b02490b"
 };
-const USE_FIREBASE = FIREBASE_CONFIG.apiKey !== "TU_API_KEY";
+const USE_FIREBASE = true;
 
 // SEEDED RNG
 function seededRng(seed) {
@@ -662,15 +665,4 @@ resizeCanvases(); loadState(); initFirebase();
 if(state.nick) goModes(); else showScreen('screen-nick');
 </script>
 </body>
-</html>);
-resizeCanvases();
-loadState();
-initFirebase();
-if(state.nick) goModes(); else showScreen('screen-nick');
-</script>
-</body>
-</html>
-wScreen('screen-nick');
-</script>
-</body>
-</html>
+</html>)
