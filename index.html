@@ -758,29 +758,29 @@ async function fetchRanking(mode, dateStr) {
   }
 }
 
-// Global ranking from aggregated players collection
+// Global ranking: computed from scores collection (same source as daily)
 async function fetchGlobalRanking(mode) {
   if (!db) return [];
   try {
-    const snap = await db._gd(db._col(db,'players'));
-    const rows = [];
+    const q    = db._q(db._col(db,'scores'), db._w('mode','==',mode));
+    const snap = await db._gd(q);
+    const byNick = {};
     snap.forEach(d => {
-      const p    = d.data();
-      const avg  = mode === 'normal' ? p.normalAvg  : p.extremeAvg;
-      const days = mode === 'normal' ? p.normalDays : p.extremeDays;
-      if (avg !== undefined && avg !== null && days) {
-        rows.push({
-          nick:   p.nick || d.id,
-          score:  avg,
-          days,
-          streak: p.streak || 0,
-          isMe:   (p.nick || d.id) === state.nick
-        });
-      }
+      const v = d.data();
+      if (!v.nick) return;
+      if (!byNick[v.nick]) byNick[v.nick] = { total: 0, days: 0 };
+      byNick[v.nick].total += v.score;
+      byNick[v.nick].days  += 1;
     });
+    const rows = Object.entries(byNick).map(([nick, s]) => ({
+      nick,
+      score: Math.round(s.total / s.days),
+      days:  s.days,
+      isMe:  nick === state.nick
+    }));
     rows.sort((a,b) => b.score - a.score);
-    return rows.slice(0,20);
-  } catch(e) { return []; }
+    return rows.slice(0, 20);
+  } catch(e) { console.warn('fetchGlobalRanking:', e); return []; }
 }
 
 // ─── CANVAS ───────────────────────────────────────────────────────────────
