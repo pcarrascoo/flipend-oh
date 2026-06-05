@@ -1194,6 +1194,8 @@ async function switchPeriodTab(period) {
 }
 async function renderRankTab(mode) {
   const table = document.getElementById('ranking-table');
+  table.innerHTML = '<div class="rank-empty">Cargando...</div>';
+  const isGlobal = state.rankPeriod === 'global';
   const rows = isGlobal
     ? await fetchGlobalRanking(mode)
     : await fetchRanking(mode, state.activeDate);
