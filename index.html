@@ -758,24 +758,23 @@ async function fetchRanking(mode, dateStr) {
   }
 }
 
-// Global ranking: computed from scores collection (same source as daily)
+// Global ranking: lee todos los scores, filtra por modo client-side
 async function fetchGlobalRanking(mode) {
   if (!db) return [];
   try {
-    const q    = db._q(db._col(db,'scores'), db._w('mode','==',mode));
-    const snap = await db._gd(q);
+    const snap = await db._gd(db._col(db,'scores'));
     const byNick = {};
     snap.forEach(d => {
       const v = d.data();
-      if (!v.nick) return;
-      if (!byNick[v.nick]) byNick[v.nick] = { total: 0, days: 0 };
+      if (!v.nick || v.mode !== mode) return;
+      if (!byNick[v.nick]) byNick[v.nick] = { total: 0, days: new Set() };
       byNick[v.nick].total += v.score;
-      byNick[v.nick].days  += 1;
+      byNick[v.nick].days.add(v.date);
     });
     const rows = Object.entries(byNick).map(([nick, s]) => ({
       nick,
-      score: Math.round(s.total / s.days),
-      days:  s.days,
+      score: Math.round(s.total / s.days.size),
+      days:  s.days.size,
       isMe:  nick === state.nick
     }));
     rows.sort((a,b) => b.score - a.score);
