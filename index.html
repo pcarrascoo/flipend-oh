@@ -266,12 +266,79 @@ function addDays(dateStr, n) {
 }
 
 // ─── NO-REPEAT SHAPE CYCLING ─────────────────────────────────────────────
-// Fixed permutations ensure every shape appears once per cycle before repeating.
-// PERM_NORMAL  cycles through 10 shapes (indices 0-9  in SHAPES)
-// PERM_EXTREME cycles through all 15 shapes (indices 0-14)
-const SHAPE_EPOCH  = '2025-06-01';
-const PERM_NORMAL  = [7,2,0,5,9,1,8,4,6,3];
-const PERM_EXTREME = [11,4,1,13,6,0,9,14,3,7,12,5,2,10,8];
+// ⚠ ESTABILIDAD: SHAPE_EPOCH, PERM_NORMAL, PERM_EXTREME y el orden de SHAPES
+// son inmutables para fechas pasadas. Cualquier cambio retroactivo rompería
+// la garantía de que todos juegan la misma figura en la misma fecha.
+// Nuevas figuras: agregar al FINAL de SHAPES y EXTENDER las permutaciones.
+// Nunca reordenar ni eliminar entradas existentes.
+const SHAPE_EPOCH  = '2025-05-25'; // fecha de lanzamiento — primera partida del juego
+const PERM_NORMAL  = [7,20,2,15,5,22,9,18,0,11,24,4,17,8,13,1,16,6,21,3,14,10,23,19,12];
+const PERM_EXTREME = [3,19,11,24,6,0,14,21,8,16,1,23,10,5,18,12,4,22,7,13,2,17,9,20,15];
+
+// ─── POP CULTURE SHAPES ───────────────────────────────────────────────────
+// Each entry is a function(cx,cy,r,rot) → [{x,y},...] using normalized coords
+const POP_SHAPES = (function(){
+  function T(p,cx,cy,r,rot){
+    const c=Math.cos(rot),s=Math.sin(rot);
+    return p.map(([nx,ny])=>({x:cx+(nx*r)*c-(ny*r)*s, y:cy+(nx*r)*s+(ny*r)*c}));
+  }
+  return {
+    bat_logo:(cx,cy,r,rot)=>T([[0,.38],[.2,.32],[.32,.44],[.5,.22],[.65,.38],[.82,.18],[.95,.28],[1.,.1],
+      [.88,-.08],[.72,.02],[.62,-.14],[.62,-.32],[.52,-.72],[.38,-.4],
+      [.2,-.4],[.08,-.54],[0,-.46],[-.08,-.54],[-.2,-.4],
+      [-.38,-.4],[-.52,-.72],[-.62,-.32],[-.62,-.14],[-.72,.02],[-.88,-.08],
+      [-1.,.1],[-.95,.28],[-.82,.18],[-.65,.38],[-.5,.22],[-.32,.44],[-.2,.32],[0,.38]],cx,cy,r,rot),
+
+    pac_man:(cx,cy,r,rot)=>{
+      const ma=0.38,p=[];
+      for(let i=0;i<=70;i++){const a=ma+i/70*(2*Math.PI-2*ma);p.push([.78*Math.cos(a),.78*Math.sin(a)]);}
+      p.push([0,0],[.78*Math.cos(ma),.78*Math.sin(ma)]);
+      return T(p,cx,cy,r,rot);
+    },
+
+    mushroom:(cx,cy,r,rot)=>T([[-.28,.8],[-.28,.45],[-.52,.32],[-.8,.05],[-.9,-.22],[-.85,-.5],[-.6,-.7],
+      [-.3,-.82],[0,-.88],[.3,-.82],[.6,-.7],[.85,-.5],[.9,-.22],[.8,.05],
+      [.52,.32],[.28,.45],[.28,.8],[-.28,.8]],cx,cy,r,rot),
+
+    space_inv:(cx,cy,r,rot)=>T([[-.35,-.85],[-.35,-.6],[-.7,-.6],[-.95,-.35],[-.95,.05],[-.7,.05],[-.7,.35],
+      [-.95,.35],[-.95,.75],[-.6,.75],[-.6,.5],[-.25,.5],[-.25,.75],[.25,.75],
+      [.25,.5],[.6,.5],[.6,.75],[.95,.75],[.95,.35],[.7,.35],[.7,.05],[.95,.05],
+      [.95,-.35],[.7,-.6],[.35,-.6],[.35,-.85],[0,-.85],[-.35,-.85]],cx,cy,r,rot),
+
+    skull:(cx,cy,r,rot)=>{
+      const p=[];
+      for(let i=0;i<=40;i++)p.push([.68*Math.cos(Math.PI+i/40*Math.PI),.52*Math.sin(Math.PI+i/40*Math.PI)-.05]);
+      p.push([.68,.18],[.52,.32],[.6,.5],[.48,.65],[.3,.76],[.16,.83],[0,.86],
+             [-.16,.83],[-.3,.76],[-.48,.65],[-.6,.5],[-.52,.32],[-.68,.18],[-.68,-.05]);
+      return T(p,cx,cy,r,rot);
+    },
+
+    guitar:(cx,cy,r,rot)=>T([[.15,-1.],[.2,-.88],[.1,-.72],[.08,-.48],[.3,-.38],[.42,-.2],[.38,-.05],
+      [.22,.06],[.48,.2],[.62,.45],[.6,.68],[.42,.85],[0,.95],[-.42,.85],
+      [-.6,.68],[-.62,.45],[-.48,.2],[-.22,.06],[-.38,-.05],[-.42,-.2],
+      [-.3,-.38],[-.08,-.48],[-.1,-.72],[-.2,-.88],[-.15,-1.],[.15,-1.]],cx,cy,r,rot),
+
+    trophy:(cx,cy,r,rot)=>T([[-.65,-.85],[-.42,-.82],[-.48,-.5],[-.65,-.42],[-.82,-.3],[-.82,-.08],[-.62,0],
+      [-.45,.22],[-.2,.42],[-.14,.55],[-.28,.72],[-.52,.9],[.52,.9],[.28,.72],
+      [.14,.55],[.2,.42],[.45,.22],[.62,0],[.82,-.08],[.82,-.3],[.65,-.42],
+      [.48,-.5],[.42,-.82],[.65,-.85],[-.65,-.85]],cx,cy,r,rot),
+
+    crown:(cx,cy,r,rot)=>T([[-.85,.6],[-.85,0],[-.58,.28],[-.42,-.52],[-.2,.12],[0,-.68],
+      [.2,.12],[.42,-.52],[.58,.28],[.85,0],[.85,.6],[-.85,.6]],cx,cy,r,rot),
+
+    anchor:(cx,cy,r,rot)=>{
+      const p=[];
+      for(let i=0;i<=40;i++)p.push([.25*Math.cos(-Math.PI/2+i/40*2*Math.PI),.25*Math.sin(-Math.PI/2+i/40*2*Math.PI)-.6]);
+      p.push([0,-.35],[.55,-.35],[0,-.35],[0,.65],[.22,.72],[.55,.6],[.82,.4],[.9,.15],
+             [0,.65],[-.22,.72],[-.55,.6],[-.82,.4],[-.9,.15],[0,.65],[0,-.35],[-.55,-.35]);
+      return T(p,cx,cy,r,rot);
+    },
+
+    controller:(cx,cy,r,rot)=>T([[-.05,-.65],[-.26,-.6],[-.54,-.5],[-.82,-.26],[-.94,.12],[-.86,.55],
+      [-.62,.74],[-.36,.7],[-.16,.58],[0,.52],[.16,.58],[.36,.7],[.62,.74],
+      [.86,.55],[.94,.12],[.82,-.26],[.54,-.5],[.26,-.6],[.05,-.65],[-.05,-.65]],cx,cy,r,rot)
+  };
+})();
 
 function dateToShapeIndex(dateStr, mode) {
   const epochMs = new Date(SHAPE_EPOCH+'T12:00:00').getTime();
@@ -283,21 +350,36 @@ function dateToShapeIndex(dateStr, mode) {
 
 // ─── SHAPES ───────────────────────────────────────────────────────────────
 const SHAPES = ['circle','oval','triangle','square','star5','star6','pentagon','hexagon',
-                'wave','spiral','cross','arrow','heart','lightning','diamond'];
+                'wave','spiral','cross','arrow','heart','lightning','diamond',
+                'bat_logo','pac_man','mushroom','space_inv','skull',
+                'guitar','trophy','crown','anchor','controller'];
 
 function generateShapeParams(rng, mode, dateStr) {
   const pool  = mode === 'extreme' ? SHAPES : SHAPES.slice(0,10);
   const shape = pool[dateToShapeIndex(dateStr, mode)];
-  const memTime  = mode === 'extreme' ? Math.floor(rng()*3)+1 : Math.floor(rng()*3)+2;
+  let memTime = mode === 'extreme' ? Math.floor(rng()*3)+1 : Math.floor(rng()*3)+2;
   const size     = 0.55 + rng()*0.25;
   const rotation = rng() * Math.PI * 2;
+
+  // Combo: every 4th extreme day shows two overlapping classic shapes
+  const epochMs = new Date(SHAPE_EPOCH+'T12:00:00').getTime();
+  const dayIdx  = Math.floor((new Date(dateStr+'T12:00:00').getTime() - epochMs) / 86400000);
+  const isCombo = mode === 'extreme' && (((dayIdx % 4) + 4) % 4 === 0);
+  let shape2 = null;
+  if (isCombo) {
+    const pool2 = SHAPES.slice(0,10).filter(s => s !== shape);
+    shape2 = pool2[Math.floor(rng() * pool2.length)];
+    memTime += 2; // extra seconds to study two shapes
+  }
+
   let disruptions = [];
   if (mode === 'extreme') {
-    const types = ['flash','decoys','rotate_while_show'];
-    const n = Math.floor(rng()*3)+1;
-    disruptions = [...types].sort(()=>rng()-0.5).slice(0,n);
+    // Richer disruption pool — min 2, max 3
+    const types = ['ghost_lines','color_shift','distortion','rotate_fast','decoys'];
+    const n = Math.floor(rng()*2) + 2;
+    disruptions = [...types].sort(()=>rng()-0.5).slice(0, n);
   }
-  return { shape, memTime, size, rotation, disruptions };
+  return { shape, shape2, isCombo, memTime, size, rotation, disruptions, finalRotation: null };
 }
 
 function shapePoints(shape, cx, cy, r, rot) {
@@ -319,7 +401,9 @@ function shapePoints(shape, cx, cy, r, rot) {
     case 'arrow':    [[-r*0.2,-r*0.3],[-r*0.2,-r*0.15],[r*0.3,-r*0.15],[r*0.3,-r*0.45],[r*0.85,0],[r*0.3,r*0.45],[r*0.3,r*0.15],[-r*0.2,r*0.15],[-r*0.2,r*0.3],[-r*0.2,-r*0.3]].forEach(([dx,dy])=>pts.push({x:cx+dx*Math.cos(rot)-dy*Math.sin(rot),y:cy+dx*Math.sin(rot)+dy*Math.cos(rot)})); break;
     case 'heart':    for(let i=0;i<=120;i++){const t=i/120*Math.PI*2,hx=r*0.7*Math.pow(Math.sin(t),3),hy=-r*0.6*(0.8125*Math.cos(t)-0.3125*Math.cos(2*t)-0.125*Math.cos(3*t)-0.0625*Math.cos(4*t)); pts.push({x:cx+hx*Math.cos(rot)-hy*Math.sin(rot),y:cy+hx*Math.sin(rot)+hy*Math.cos(rot)});} break;
     case 'lightning':[[-r*0.2,-r],[r*0.1,-r*0.1],[-r*0.1,-r*0.1],[r*0.2,r],[-r*0.1,0],[r*0.1,0],[-r*0.2,-r]].forEach(([dx,dy])=>pts.push({x:cx+dx*Math.cos(rot)-dy*Math.sin(rot),y:cy+dx*Math.sin(rot)+dy*Math.cos(rot)})); break;
-    default: for(let i=0;i<=60;i++) pts.push(p(i/60*Math.PI*2,r));
+    default:
+      if (POP_SHAPES[shape]) return POP_SHAPES[shape](cx, cy, r, rot);
+      for(let i=0;i<=60;i++) pts.push(p(i/60*Math.PI*2,r));
   }
   return pts;
 }
@@ -331,6 +415,24 @@ function drawShape(ctx, pts, color, lw, alpha) {
   ctx.beginPath(); ctx.moveTo(pts[0].x,pts[0].y);
   for(let i=1;i<pts.length;i++) ctx.lineTo(pts[i].x,pts[i].y);
   ctx.stroke(); ctx.restore();
+}
+
+// ─── DRAW TIME ────────────────────────────────────────────────────────────
+// Baseline: median path length of classic shapes at typical canvas size (~320px)
+const BASE_PATH_LEN = 660;
+function pathLength(pts) {
+  let len = 0;
+  for (let i = 1; i < pts.length; i++) {
+    const dx=pts[i].x-pts[i-1].x, dy=pts[i].y-pts[i-1].y;
+    len += Math.sqrt(dx*dx+dy*dy);
+  }
+  return len;
+}
+// Scale draw time with path length: baseline 5s (normal) / 3s (extreme), cap at 2×
+function calcDrawTime(refPts, mode) {
+  const base  = mode === 'extreme' ? 3 : 5;
+  const ratio = pathLength(refPts) / BASE_PATH_LEN;
+  return Math.max(base * 0.8, Math.min(base * 3.0, base * ratio));
 }
 
 // ─── SCORING ──────────────────────────────────────────────────────────────
@@ -417,15 +519,18 @@ function renderOverlay() {
   cmpCtx.clearRect(0,0,w,h);
   cmpCtx.fillStyle='#1a1a24'; cmpCtx.fillRect(0,0,w,h);
   const pad=28, TOL=0.20;
+  const refAll = state.refPts2 ? [...state.refPts, ...state.refPts2] : state.refPts;
   if (!state.drawnPts||state.drawnPts.length<2) {
-    const rn=resamplePath(normalizePath(state.refPts),250);
-    drawShape(cmpCtx, rn.map(p=>({x:p.x*(w-2*pad)+w/2,y:p.y*(h-2*pad)+h/2})),'rgba(160,190,255,0.5)',5);
+    const rn=resamplePath(normalizePath(refAll),250);
+    const sc0=Math.min(w-2*pad,h-2*pad);
+    drawShape(cmpCtx, rn.map(p=>({x:p.x*sc0+w/2,y:p.y*sc0+h/2})),'rgba(160,190,255,0.5)',5);
     return;
   }
-  const pair=normalizePair(state.refPts,state.drawnPts);
+  const pair=normalizePair(refAll,state.drawnPts);
   const refN=resamplePath(pair.normRef,250);
   const drawnN=pair.normDrawn;
-  const toC=p=>({x:p.x*(w-2*pad)+w/2, y:p.y*(h-2*pad)+h/2});
+  const sc=Math.min(w-2*pad,h-2*pad);
+  const toC=p=>({x:p.x*sc+w/2, y:p.y*sc+h/2});
   drawShape(cmpCtx, refN.map(toC),'rgba(160,190,255,0.18)',7);
   const drawnC=drawnN.map(toC);
   for(let i=1;i<drawnC.length;i++){
@@ -514,13 +619,15 @@ function migrateOldData() {
 let state = {
   nick:        null,
   today:       todayStr(),
-  activeDate:  todayStr(),   // date currently being played/viewed
+  activeDate:  todayStr(),
   currentMode: null,
   shapeParams: null,
   refPts:      null,
+  refPts2:     null,    // second shape for combo days
+  drawTime:    5,       // seconds, calculated from path length
   drawnPts:    [],
-  scores:      { normal:null, extreme:null },   // for activeDate
-  savedDraws:  { normal:null, extreme:null },   // for activeDate
+  scores:      { normal:null, extreme:null },
+  savedDraws:  { normal:null, extreme:null },
   rankTab:     'normal',
   rankPeriod:  'today'
 };
@@ -706,27 +813,134 @@ function clearDraw(){state.drawnPts=[];drawCtx.clearRect(0,0,drawCanvas.width,dr
 
 // ─── DISRUPTIONS ──────────────────────────────────────────────────────────
 let disruptTimers = [];
-function clearDisruptions(){disruptTimers.forEach(clearTimeout);disruptTimers=[];document.getElementById('disrupt-flash').style.opacity='0';}
-function startDisruptions(disruptions, rng) {
-  if (!disruptions||!disruptions.length) return;
-  if (disruptions.includes('flash')) {
-    const colors=['#e05c5c','#e8c547','#5c9ee8','#9e5ce8']; let i=0;
-    const fn=()=>{const el=document.getElementById('disrupt-flash');el.style.background=colors[i++%colors.length];el.style.opacity='0.15';disruptTimers.push(setTimeout(()=>{el.style.opacity='0';disruptTimers.push(setTimeout(fn,300+rng()*400));},80));};
-    disruptTimers.push(setTimeout(fn,400));
+let disruptAnimId = null;
+
+function clearDisruptions() {
+  if (disruptAnimId !== null) { clearTimeout(disruptAnimId); disruptAnimId = null; }
+  disruptTimers.forEach(clearTimeout); disruptTimers = [];
+  document.getElementById('disrupt-flash').style.opacity = '0';
+  memCtx.clearRect(0, 0, memCanvas.width, memCanvas.height);
+}
+
+// Unified animation loop — all disruptions rendered in one pass every 40ms
+function startDisruptions(disruptions, rng, memTimeSec) {
+  if (!disruptions || !disruptions.length) return;
+  const w = memCanvas.width, h = memCanvas.height;
+  const cx = w/2, cy = h/2;
+  const startTime = Date.now();
+
+  // Pre-generate ghost lines (seeded)
+  let ghosts = null;
+  if (disruptions.includes('ghost_lines')) {
+    ghosts = [];
+    const N = 4 + Math.floor(rng() * 3);
+    const gc = ['#e05c5c','#e8c547','#9e5ce8','#5ce8d8','#e8a05c'];
+    for (let i = 0; i < N; i++) {
+      const np = 3 + Math.floor(rng() * 4);
+      const pts = [];
+      for (let j = 0; j < np; j++)
+        pts.push({ x: w*0.08 + rng()*w*0.84, y: h*0.08 + rng()*h*0.84 });
+      ghosts.push({ pts, color: gc[i % gc.length], lw: 2.5 + rng()*2 });
+    }
   }
-  if (disruptions.includes('rotate_while_show')) {
-    let angle=0;
-    const fn=()=>{angle+=0.05;const cx=memCanvas.width/2,cy=memCanvas.height/2,r=state.shapeParams.size*Math.min(cx,cy),pts=shapePoints(state.shapeParams.shape,cx,cy,r,angle);state.refPts=pts;memCtx.clearRect(0,0,memCanvas.width,memCanvas.height);drawShape(memCtx,pts,'#5c9ee8',3);disruptTimers.push(setTimeout(fn,50));};
-    disruptTimers.push(setTimeout(fn,100));
+
+  // Distortion params
+  let distPhase=0, distFreq=0, distMax=0;
+  if (disruptions.includes('distortion')) {
+    distPhase = rng() * Math.PI * 2;
+    distFreq  = 3 + rng() * 3;
+    distMax   = 0.13 + rng() * 0.09;
   }
+
+  // Color shift base hue
+  let baseHue = disruptions.includes('color_shift') ? Math.floor(rng()*360) : -1;
+
+  // Rotate-fast accumulator
+  let rotAngle = 0;
+  const rotSpeed = disruptions.includes('rotate_fast') ? 0.16 + rng()*0.08 : 0;
+
+  const needsLoop = disruptions.some(d => ['ghost_lines','color_shift','distortion','rotate_fast'].includes(d));
+
+  function tick() {
+    const elapsed = (Date.now() - startTime) / 1000;
+    const t = Math.min(elapsed / memTimeSec, 1);
+    // At 65% of mem time ALL disruptions freeze: player sees clean final shape
+    const frozen = t >= 0.65;
+
+    memCtx.clearRect(0, 0, w, h);
+
+    // Background pulse (color_shift) — stops when frozen
+    if (baseHue >= 0 && !frozen) {
+      memCtx.fillStyle = `hsl(${(baseHue + elapsed*80 + 180) % 360},18%,11%)`;
+      memCtx.fillRect(0, 0, w, h);
+    }
+
+    // Ghost lines: 0→45% ghosts only, 45→65% crossfade, ≥65% shape only (also aligns with freeze)
+    let realAlpha = 1;
+    if (ghosts && !frozen) {
+      realAlpha   = t < 0.45 ? 0 : (t-0.45)/0.2;  // ramps 0→1 between 45% and 65%
+      const gAlpha = 1 - realAlpha;
+      if (gAlpha > 0.01) ghosts.forEach(g => drawShape(memCtx, g.pts, g.color, g.lw, gAlpha));
+    }
+
+    // Rotate fast: update refPts + finalRotation — STOPS when frozen
+    if (rotSpeed > 0 && !frozen) {
+      rotAngle += rotSpeed;
+      const r = state.shapeParams.size * Math.min(cx, cy);
+      const base = state.shapeParams.rotation;
+      state.refPts = shapePoints(state.shapeParams.shape, cx, cy, r, base + rotAngle);
+      if (state.shapeParams.shape2)
+        state.refPts2 = shapePoints(state.shapeParams.shape2, cx, cy, r, base + rotAngle + 0.4);
+      state.shapeParams.finalRotation = base + rotAngle;
+    }
+
+    // Distortion: visual noise — STOPS when frozen (shape snaps clean)
+    let dPts = state.refPts, dPts2 = state.refPts2;
+    if (distMax > 0 && realAlpha > 0 && !frozen) {
+      const amp = Math.sin(t / 0.65 * Math.PI) * distMax * Math.min(cx, cy);
+      dPts = state.refPts.map((pt,i)=>({
+        x: pt.x + amp * Math.sin(i*distFreq + elapsed*5 + distPhase),
+        y: pt.y + amp * Math.cos(i*distFreq*1.3 + elapsed*4 + distPhase*0.7)
+      }));
+      if (state.refPts2) dPts2 = state.refPts2.map((pt,i)=>({
+        x: pt.x + amp * Math.sin(i*distFreq*0.9 + elapsed*4.5 + distPhase*1.2),
+        y: pt.y + amp * Math.cos(i*distFreq*1.1 + elapsed*3.8 + distPhase*0.8)
+      }));
+    }
+
+    // Figure color — resets to game color when frozen
+    const baseColor = state.currentMode === 'extreme' ? '#e05c5c' : '#5c9ee8';
+    const figColor  = (!frozen && baseHue >= 0)
+      ? `hsl(${(baseHue + elapsed*110) % 360},80%,65%)`
+      : baseColor;
+
+    // Draw real shape(s)
+    if (realAlpha > 0.01) {
+      drawShape(memCtx, dPts, figColor, 3, realAlpha);
+      if (dPts2) drawShape(memCtx, dPts2, '#e8c547', 2.5, realAlpha * 0.85);
+    }
+
+    if (t < 1) disruptAnimId = setTimeout(tick, 40);
+  }
+
+  if (needsLoop) disruptAnimId = setTimeout(tick, 0);
+
+  // Decoys: brief ghost shapes drawn on top (independent of main loop)
   if (disruptions.includes('decoys')) {
-    disruptTimers.push(setTimeout(()=>{
-      const cx=memCanvas.width/2,cy=memCanvas.height/2,r=state.shapeParams.size*Math.min(cx,cy);
-      const alt=SHAPES.filter(s=>s!==state.shapeParams.shape);
-      drawShape(memCtx,shapePoints(alt[Math.floor(rng()*alt.length)],cx*0.5,cy*0.5,r*0.4,rng()*Math.PI*2),'#e8c547',3,0.25);
-      drawShape(memCtx,shapePoints(alt[Math.floor(rng()*alt.length)],cx*1.5,cy*1.5,r*0.4,rng()*Math.PI*2),'#e05c5c',3,0.25);
-      disruptTimers.push(setTimeout(()=>{memCtx.clearRect(0,0,memCanvas.width,memCanvas.height);drawShape(memCtx,state.refPts,'#5c9ee8',3);},600));
-    },800+rng()*500));
+    disruptTimers.push(setTimeout(() => {
+      const r = state.shapeParams.size * Math.min(cx, cy);
+      const alt = SHAPES.slice(0,10).filter(s => s !== state.shapeParams.shape);
+      drawShape(memCtx, shapePoints(alt[Math.floor(rng()*alt.length)], cx*0.45, cy*0.45, r*0.38, rng()*Math.PI*2), '#e8c547', 2.5, 0.35);
+      drawShape(memCtx, shapePoints(alt[Math.floor(rng()*alt.length)], cx*1.55, cy*1.55, r*0.38, rng()*Math.PI*2), '#e05c5c', 2.5, 0.35);
+      disruptTimers.push(setTimeout(() => {
+        if (disruptAnimId === null) { // only redraw if loop isn't running
+          const fc = state.currentMode==='extreme' ? '#e05c5c' : '#5c9ee8';
+          memCtx.clearRect(0,0,w,h);
+          drawShape(memCtx, state.refPts, fc, 3);
+          if (state.refPts2) drawShape(memCtx, state.refPts2, '#e8c547', 2.5, 0.85);
+        }
+      }, 700));
+    }, 900 + rng()*600));
   }
 }
 
@@ -743,7 +957,7 @@ function goModes() {
 
 function changeDate(delta) {
   const candidate = addDays(state.activeDate, delta);
-  const minDate   = addDays(state.today, -60);
+  const minDate = '2025-05-25'; // fecha de lanzamiento del juego — primera partida disponible
   if (candidate > state.today || candidate < minDate) return;
   state.activeDate = candidate;
   loadActiveDateState(candidate);
@@ -757,7 +971,7 @@ function updateModeScreen() {
   const isPast = state.activeDate !== state.today;
   document.getElementById('past-badge').style.display = isPast ? 'block' : 'none';
   document.getElementById('btn-next-day').disabled    = (state.activeDate === state.today);
-  document.getElementById('btn-prev-day').disabled    = (state.activeDate <= addDays(state.today, -60));
+  document.getElementById('btn-prev-day').disabled    = (state.activeDate <= '2025-05-25');
 
   const nDone = state.scores.normal  !== null;
   const eDone = state.scores.extreme !== null;
@@ -787,7 +1001,8 @@ function showSavedResult(mode) {
   const seed = dateToSeed(state.activeDate, mode), rng = seededRng(seed);
   const params = generateShapeParams(rng, mode, state.activeDate);
   const cx = drawCanvas.width/2, cy = drawCanvas.height/2, r = params.size*Math.min(cx,cy);
-  state.refPts   = shapePoints(params.shape, cx, cy, r, params.rotation);
+  state.refPts  = shapePoints(params.shape, cx, cy, r, params.rotation);
+  state.refPts2 = params.isCombo ? shapePoints(params.shape2, cx, cy, r, params.rotation + 0.4) : null;
   state.drawnPts = state.savedDraws[mode] || [];
   showResult(score);
 }
@@ -798,14 +1013,22 @@ function startMode(mode) {
   const seed = dateToSeed(state.activeDate, mode), rng = seededRng(seed);
   state.shapeParams = generateShapeParams(rng, mode, state.activeDate);
   resizeCanvases();
-  const cx = memCanvas.width/2, cy = memCanvas.height/2, r = state.shapeParams.size*Math.min(cx,cy);
-  state.refPts = shapePoints(state.shapeParams.shape, cx, cy, r, state.shapeParams.rotation);
+  const cx = memCanvas.width/2, cy = memCanvas.height/2;
+  const r = state.shapeParams.size * Math.min(cx, cy);
+  state.refPts  = shapePoints(state.shapeParams.shape, cx, cy, r, state.shapeParams.rotation);
+  state.refPts2 = state.shapeParams.isCombo
+    ? shapePoints(state.shapeParams.shape2, cx, cy, r, state.shapeParams.rotation + 0.4)
+    : null;
   document.getElementById('mem-mode-label').textContent  = mode==='normal'?'NORMAL':'EXTREMO';
   document.getElementById('draw-mode-label').textContent = mode==='normal'?'NORMAL':'EXTREMO';
   showScreen('screen-memorize');
-  memCtx.clearRect(0,0,memCanvas.width,memCanvas.height);
-  drawShape(memCtx, state.refPts, mode==='normal'?'#5c9ee8':'#e05c5c', 3);
-  startDisruptions(state.shapeParams.disruptions, seededRng(seed+1));
+  memCtx.clearRect(0, 0, memCanvas.width, memCanvas.height);
+  // ghost_lines handles its own drawing; otherwise render immediately
+  if (!state.shapeParams.disruptions.includes('ghost_lines')) {
+    drawShape(memCtx, state.refPts, mode==='normal'?'#5c9ee8':'#e05c5c', 3);
+    if (state.refPts2) drawShape(memCtx, state.refPts2, '#e8c547', 2.5, 0.85);
+  }
+  startDisruptions(state.shapeParams.disruptions, seededRng(seed+1), state.shapeParams.memTime);
   let t = state.shapeParams.memTime;
   document.getElementById('countdown').textContent = t;
   document.getElementById('mem-instruction').textContent = 'Memoriza la figura. Tienes '+t+' segundo'+(t>1?'s':'')+'.';
@@ -817,17 +1040,28 @@ function startMode(mode) {
 }
 function startDrawPhase() {
   submitted=false; clearDraw(); resizeCanvases();
-  const cx=drawCanvas.width/2, cy=drawCanvas.height/2, r=state.shapeParams.size*Math.min(cx,cy);
-  state.refPts = shapePoints(state.shapeParams.shape, cx, cy, r, state.shapeParams.rotation);
+  const cx = drawCanvas.width/2, cy = drawCanvas.height/2;
+  const r = state.shapeParams.size * Math.min(cx, cy);
+  // Use final rotation if rotate_fast was active, else original
+  const rot = state.shapeParams.finalRotation !== null
+    ? state.shapeParams.finalRotation
+    : state.shapeParams.rotation;
+  state.refPts  = shapePoints(state.shapeParams.shape, cx, cy, r, rot);
+  state.refPts2 = state.shapeParams.isCombo
+    ? shapePoints(state.shapeParams.shape2, cx, cy, r, rot + 0.4)
+    : null;
+  // Draw time scales with path length
+  const allRef = state.refPts2 ? [...state.refPts, ...state.refPts2] : state.refPts;
+  state.drawTime = calcDrawTime(allRef, state.currentMode);
   showScreen('screen-draw'); startDrawTimer();
 }
 function startDrawTimer() {
   if (drawTimer) clearTimeout(drawTimer);
-  const totalMs  = (state.currentMode==='extreme'?3:5)*1000;
+  const totalMs  = state.drawTime * 1000;
   const startTime = Date.now();
   const numEl = document.getElementById('draw-timer-num'), barEl = document.getElementById('draw-timer-bar');
   barEl.style.transition='none'; barEl.style.width='100%'; barEl.style.background='var(--accent)';
-  numEl.style.color='var(--accent)'; numEl.textContent = state.currentMode==='extreme'?3:5;
+  numEl.style.color='var(--accent)'; numEl.textContent = Math.ceil(state.drawTime);
   barEl.getBoundingClientRect();
   barEl.style.transition='width '+(totalMs/1000)+'s linear'; barEl.style.width='0%';
   function tick() {
@@ -847,7 +1081,8 @@ async function submitDraw() {
   if (state.drawnPts.length<5){ showToast('Dibuja algo primero!'); submitted=false; drawCanvas.style.pointerEvents='auto'; return; }
   document.getElementById('draw-timer-num').textContent='...';
   await new Promise(r=>setTimeout(r,20));
-  const score = scorePaths(state.refPts, state.drawnPts);
+  const refForScore = state.refPts2 ? [...state.refPts, ...state.refPts2] : state.refPts;
+  const score = scorePaths(refForScore, state.drawnPts);
   saveScore(state.currentMode, score);
   await pushScore(state.currentMode, score);
   showResult(score);
@@ -860,11 +1095,52 @@ function showResult(score) {
   arc.style.stroke = score>=70?'#5cb85c':score>=40?'#e8c547':'#e05c5c';
   setTimeout(()=>{ arc.style.strokeDashoffset = C-(C*score/100); },100);
   resizeCanvases(); renderOverlay();
-  const emoji    = score>=90?'objetivo':score>=70?'bien':score>=50?'ok':score>=30?'mal':'X';
+  const COMENTARIOS = {
+    perfecto: [
+      "Da Vinci que te llame. En serio.",
+      "Pixel perfect. Estás enfermo (en el buen sentido).",
+      "¿Practicaste esto o simplemente eres así de insoportable?",
+      "Claramente nunca fallas en nada. Qué fastidio eres.",
+      "El resto de los jugadores prefieren no hablar del tema."
+    ],
+    bien: [
+      "Top tier. Muéstrale esto a tu ex.",
+      "El porcentaje que faltó claramente no lo necesitabas.",
+      "Tu cerebro y tu mano se pusieron de acuerdo hoy. Evento histórico.",
+      "Sólido. No perfecto, pero nadie es perfecto. Bueno, uno.",
+      "Alguien fue alimentado correctamente de niño."
+    ],
+    ok: [
+      "Mediocre pero con clase. Quizás.",
+      "Por encima de la mediocridad, que ya es algo en esta vida.",
+      "Suficiente para contar. Insuficiente para presumir.",
+      "Ni bien ni mal. El limbo del dibujo.",
+      "Tu pulso está raro. O quizás es tu vida entera."
+    ],
+    mal: [
+      "¿Temblaste? ¿Lloraste? ¿Las dos cosas?",
+      "Claramente fue el dedo. No tú. El dedo.",
+      "Hay días así. Hoy fue uno de esos días.",
+      "El juego no te va a recordar, pero tú sí vas a recordar el juego.",
+      "En términos artísticos: interesante. En términos objetivos: terrible."
+    ],
+    desastre: [
+      "Esto es un delito visual.",
+      "Maravillosamente malo. Arte abstracto puro.",
+      "¿Nunca usaste un lápiz en tu vida?",
+      "ChatGPT dibujaría mejor y no tiene manos.",
+      "Tus amigos van a fingir que no te conocen.",
+      "Impressive. No one asked for this level of chaos."
+    ]
+  };
+  const rango = score>=90?'perfecto':score>=70?'bien':score>=50?'ok':score>=30?'mal':'desastre';
+  const pool  = COMENTARIOS[rango];
+  const comentario = pool[Math.floor(Math.random()*pool.length)];
+  const emoji = score>=90?'🎯':score>=70?'✅':score>=50?'⚠️':score>=30?'💀':'🗑️';
   const modeStr  = mode==='normal'?'Normal':'Extremo';
   const dateSufx = state.activeDate!==state.today ? ' ('+state.activeDate+')' : '';
   document.getElementById('share-msg').textContent =
-    "Flipend'oh "+state.today+dateSufx+"\nModo "+modeStr+": "+score+"% "+emoji+"\nflipendoh.github.io";
+    "Flipend'oh "+state.today+dateSufx+"\nModo "+modeStr+": "+score+"% "+emoji+"\n"+comentario+"\nhttps://pcarrascoo.github.io/flipend-oh/";
   showScreen('screen-result');
 }
 
@@ -918,8 +1194,6 @@ async function switchPeriodTab(period) {
 }
 async function renderRankTab(mode) {
   const table = document.getElementById('ranking-table');
-  table.innerHTML = '<div class="rank-empty">Cargando...</div>';
-  const isGlobal = state.rankPeriod === 'global';
   const rows = isGlobal
     ? await fetchGlobalRanking(mode)
     : await fetchRanking(mode, state.activeDate);
