@@ -108,6 +108,12 @@ body { background:var(--bg); color:var(--text); font-family:'Courier New',monosp
   color:var(--muted); letter-spacing:1px; }
 .period-tab.active { background:var(--accent); color:#0f0f14; font-weight:bold; }
 .rank-empty { color:var(--muted); font-size:0.8rem; text-align:center; padding:20px; }
+/* Likes */
+.like-btn { background:none; border:none; cursor:pointer; font-size:0.72rem;
+  color:var(--muted); padding:2px 8px; border-radius:4px; flex-shrink:0;
+  transition:color 0.15s; font-family:'Courier New',monospace; line-height:1; }
+.like-btn.liked { color:#e05c5c; }
+.like-btn:disabled { opacity:0.4; cursor:not-allowed; }
 /* Misc */
 .disrupt-flash { position:fixed; inset:0; pointer-events:none; z-index:10; opacity:0; transition:opacity 0.1s; }
 .toast { position:fixed; bottom:40px; left:50%; transform:translateX(-50%);
@@ -255,6 +261,26 @@ function dateToSeed(dateStr, mode) {
   for (let i = 0; i < dateStr.length; i++) h = Math.imul(31,h) + dateStr.charCodeAt(i) | 0;
   return h >>> 0;
 }
+// Device fingerprint — pre-computado una vez, invisible al usuario
+let _deviceFp = null;
+function getDeviceFp() {
+  if (_deviceFp) return _deviceFp;
+  try {
+    const c = document.createElement('canvas');
+    const ctx = c.getContext('2d');
+    ctx.textBaseline = 'top'; ctx.font = '14px Arial';
+    ctx.fillStyle = '#f60'; ctx.fillRect(0,0,80,20);
+    ctx.fillStyle = '#069'; ctx.fillText('flip',2,2);
+    ctx.fillStyle = 'rgba(102,204,0,0.7)'; ctx.fillText('end',20,2);
+    const raw = [screen.width,screen.height,window.devicePixelRatio,
+      navigator.platform, c.toDataURL()].join('|');
+    let h = 0;
+    for (let i = 0; i < raw.length; i++) h = Math.imul(31,h)+raw.charCodeAt(i)|0;
+    _deviceFp = (h>>>0).toString(36);
+  } catch(e) { _deviceFp = 'unknown'; }
+  return _deviceFp;
+}
+
 function todayStr() {
   const d = new Date();
   return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
@@ -592,6 +618,7 @@ function saveScoreForDate(dateStr, mode, score) {
     const all = JSON.parse(lsGet(LS_ALL_SCORES)||'{}');
     if(!all[dateStr]) all[dateStr]={};
     all[dateStr][mode] = score;
+    all[dateStr][mode+'_playedOn'] = todayStr(); // cuándo se jugó realmente
     lsSet(LS_ALL_SCORES, JSON.stringify(all));
   } catch(e) {}
 }
@@ -700,25 +727,66 @@ async function pushScore(mode, score) {
     const docRef = db._doc(db, 'scores', date+'_'+mode+'_'+state.nick);
     const existing = await db._gd_doc(docRef);
     if (existing.exists()) return; // ya registrado — no sobreescribir
-    await db._sd(docRef, { nick:state.nick, mode, score, date, ts:Date.now() });
+    await db._sd(docRef, { nick:state.nick, mode, score, date, ts:Date.now(), fp:getDeviceFp() });
     await updatePlayerStats(mode, score, date);
   } catch(e) { console.warn('pushScore:', e); }
 }
 
-// Sincroniza todos los scores del nick desde Firebase → localStorage
-// Evita que se pueda rejugar en otro dispositivo o tras limpiar caché
+// Sincroniza scores Y dibujos del nick desde Firebase → localStorage
 async function syncScoresFromFirebase() {
   if (!db || !state.nick) return;
   try {
-    const q    = db._q(db._col(db,'scores'), db._w('nick','==',state.nick));
-    const snap = await db._gd(q);
+    // Scores
+    const sq   = db._q(db._col(db,'scores'), db._w('nick','==',state.nick));
+    const snap = await db._gd(sq);
     snap.forEach(d => {
       const v = d.data();
       if (v.date && v.mode && v.score != null) saveScoreForDate(v.date, v.mode, v.score);
     });
-    state.scores = loadScoresForDate(state.activeDate);
+    // Dibujos — denormalizar a tamaño de canvas del dispositivo actual
+    const dq    = db._q(db._col(db,'draws'), db._w('nick','==',state.nick));
+    const dsnap = await db._gd(dq);
+    const w = drawCanvas.width, h = drawCanvas.height;
+    dsnap.forEach(d => {
+      const v = d.data();
+      if (v.date && v.mode && v.pts) {
+        const localPts = v.pts.map(p => ({ x: p.x*w, y: p.y*h }));
+        saveDrawForDate(v.date, v.mode, localPts);
+      }
+    });
+    state.scores    = loadScoresForDate(state.activeDate);
+    state.savedDraws = {
+      normal:  loadDrawForDate(state.activeDate, 'normal'),
+      extreme: loadDrawForDate(state.activeDate, 'extreme')
+    };
     updateModeScreen();
   } catch(e) { console.warn('syncScoresFromFirebase:', e); }
+}
+
+async function pushDraw(mode) {
+  if (!db || !state.drawnPts || state.drawnPts.length < 5) return;
+  const date = state.activeDate;
+  try {
+    const docRef = db._doc(db, 'draws', date+'_'+mode+'_'+state.nick);
+    const existing = await db._gd_doc(docRef);
+    if (existing.exists()) return; // no sobreescribir
+    const w = drawCanvas.width, h = drawCanvas.height;
+    const pts = state.drawnPts.map(p => ({ x: p.x/w, y: p.y/h })); // normalizado 0-1
+    await db._sd(docRef, { nick:state.nick, mode, date, pts });
+  } catch(e) { console.warn('pushDraw:', e); }
+}
+
+// Fetch puntual de un dibujo desde Firebase (fallback cuando no hay local)
+async function fetchDrawFromFirebase(mode) {
+  if (!db) return null;
+  try {
+    const snap = await db._gd_doc(db._doc(db,'draws',state.activeDate+'_'+mode+'_'+state.nick));
+    if (!snap.exists()) return null;
+    const v = snap.data();
+    if (!v.pts) return null;
+    const w = drawCanvas.width, h = drawCanvas.height;
+    return v.pts.map(p => ({ x: p.x*w, y: p.y*h }));
+  } catch(e) { return null; }
 }
 
 async function updatePlayerStats(mode, score, date) {
@@ -797,6 +865,55 @@ async function fetchRanking(mode, dateStr) {
   } catch(e) {
     const s = state.scores[mode];
     return s !== null ? [{nick:state.nick, score:s, isMe:true}] : [];
+  }
+}
+
+// ─── LIKES ────────────────────────────────────────────────────────────────
+async function fetchLikesForRanking(date, mode, nicks) {
+  if (!db) return {};
+  const result = {};
+  await Promise.all(nicks.map(async nick => {
+    try {
+      const snap = await db._gd_doc(db._doc(db,'likes',date+'_'+mode+'_'+nick));
+      result[nick] = snap.exists() ? (snap.data().likers || []) : [];
+    } catch(e) { result[nick] = []; }
+  }));
+  return result;
+}
+
+async function toggleLike(date, mode, targetNick) {
+  if (!db || targetNick === state.nick) return null;
+  const ref = db._doc(db, 'likes', date+'_'+mode+'_'+targetNick);
+  try {
+    const snap = await db._gd_doc(ref);
+    let likers = snap.exists() ? (snap.data().likers || []) : [];
+    const idx = likers.indexOf(state.nick);
+    if (idx >= 0) likers.splice(idx, 1); else likers.push(state.nick);
+    await db._sd(ref, { likers });
+    return likers;
+  } catch(e) { console.warn('toggleLike:', e); return null; }
+}
+
+async function onLikeClick(btn) {
+  if (!db || !state.nick) return;
+  const nick = btn.dataset.nick;
+  const date = state.activeDate;
+  const mode = state.rankTab;
+  if (nick === state.nick) {
+    try {
+      const snap = await db._gd_doc(db._doc(db,'likes',date+'_'+mode+'_'+nick));
+      const likers = snap.exists() ? (snap.data().likers||[]) : [];
+      showToast(likers.length ? '❤️ '+likers.join(' · ') : 'Nadie aún 😢');
+    } catch(e) {}
+    return;
+  }
+  btn.disabled = true;
+  const likers = await toggleLike(date, mode, nick);
+  if (likers !== null) {
+    const liked = likers.includes(state.nick);
+    btn.className = 'like-btn'+(liked?' liked':'');
+    btn.textContent = '❤️ '+(likers.length||'·');
+    btn.disabled = false;
   }
 }
 
@@ -1012,6 +1129,9 @@ function computeNormalStreak() {
     while (true) {
       const s = all[d];
       if (!s || s.normal == null) break;
+      // Si tiene registro de cuándo se jugó, verificar que fue el día correcto
+      // (jugar un día pasado hoy no cuenta para la racha)
+      if (s.normal_playedOn && s.normal_playedOn !== d) break;
       streak++;
       d = addDays(d, -1);
     }
@@ -1063,6 +1183,17 @@ function showSavedResult(mode) {
   if (params.warpAmt > 0) state.refPts = warpPoints(state.refPts, cx, cy, params.warpAmt, params.warpFreq, params.warpPhase);
   state.refPts2 = params.isCombo ? shapePoints(params.shape2, cx, cy, r, params.rotation + 0.4) : null;
   state.drawnPts = state.savedDraws[mode] || [];
+  // Fallback: si no hay dibujo local, buscarlo en Firebase
+  if (!state.drawnPts.length) {
+    fetchDrawFromFirebase(mode).then(pts => {
+      if (pts && pts.length) {
+        state.drawnPts = pts;
+        saveDrawForDate(state.activeDate, mode, pts);
+        state.savedDraws[mode] = pts;
+        renderOverlay();
+      }
+    });
+  }
   showResult(score);
 }
 function startMode(mode) {
@@ -1145,8 +1276,9 @@ async function submitDraw() {
   const refForScore = state.refPts2 ? [...state.refPts, ...state.refPts2] : state.refPts;
   const score = scorePaths(refForScore, state.drawnPts);
   saveScore(state.currentMode, score);
-  await pushScore(state.currentMode, score);
-  showResult(score);
+  showResult(score);           // inmediato — no esperar a Firebase
+  pushScore(state.currentMode, score); // background
+  pushDraw(state.currentMode);         // background
 }
 function showResult(score) {
   const mode = state.currentMode;
@@ -1329,18 +1461,36 @@ async function renderRankTab(mode) {
     return;
   }
   const medals = ['gold','silver','bronze'];
+  const likeDate = state.activeDate;
   table.innerHTML = rows.map((r,i) => {
     const pos       = i<3 ? (i+1) : '#'+(i+1);
     const streakTxt = isGlobal && r.streak>=2 ? ' 🔥'+r.streak : '';
     const metaHtml  = isGlobal
       ? '<span class="rank-meta">'+r.days+'d'+streakTxt+'</span>'
       : '';
+    const likeBtn = !isGlobal && db && state.nick
+      ? '<button class="like-btn" id="lbtn-'+r.nick+'" data-nick="'+r.nick+'" onclick="onLikeClick(this)">❤️ ·</button>'
+      : '';
     return '<div class="rank-row'+(r.isMe?' me':'')+'">'+
       '<div class="rank-pos '+(medals[i]||'')+'">'+pos+'</div>'+
       '<div class="rank-name">'+(r.nick||'?')+metaHtml+'</div>'+
       '<div class="rank-score">'+(r.score??'--')+'%</div>'+
+      likeBtn+
       '</div>';
   }).join('');
+  // Cargar likes async y actualizar botones
+  if (!isGlobal && db && state.nick) {
+    fetchLikesForRanking(likeDate, mode, rows.map(r=>r.nick)).then(lmap => {
+      rows.forEach(r => {
+        const btn = document.getElementById('lbtn-'+r.nick);
+        if (!btn) return;
+        const likers = lmap[r.nick]||[];
+        const liked  = likers.includes(state.nick);
+        btn.className = 'like-btn'+(liked?' liked':'');
+        btn.textContent = '❤️ '+(likers.length||'·');
+      });
+    });
+  }
 }
 
 function showToast(msg){
