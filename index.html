@@ -355,7 +355,7 @@ const SHAPES = ['circle','oval','triangle','square','star5','star6','pentagon','
                 'bat_logo','pac_man','mushroom','space_inv','skull',
                 'guitar','trophy','crown','anchor','controller'];
 
-const WARP_EPOCH = '2026-06-08'; // nuevas figuras y warp solo desde esta fecha
+const WARP_EPOCH = '2026-06-06'; // nuevas figuras y warp solo desde esta fecha
 
 function generateShapeParams(rng, mode, dateStr) {
   // Pool:
@@ -689,6 +689,7 @@ async function initFirebase() {
     db = getFirestore(app);
     db._sd=setDoc; db._gd_doc=getDoc; db._doc=doc;
     db._col=collection; db._q=query; db._gd=getDocs; db._w=where;
+    if (state.nick) syncScoresFromFirebase(); // restaurar scores en nuevo dispositivo
   } catch(e) { console.warn('Firebase init:', e); }
 }
 
@@ -696,13 +697,28 @@ async function pushScore(mode, score) {
   if (!db) return;
   const date = state.activeDate;
   try {
-    // One doc per player/date/mode — upsert via fixed ID
-    await db._sd(
-      db._doc(db, 'scores', date+'_'+mode+'_'+state.nick),
-      { nick:state.nick, mode, score, date, ts:Date.now() }
-    );
+    const docRef = db._doc(db, 'scores', date+'_'+mode+'_'+state.nick);
+    const existing = await db._gd_doc(docRef);
+    if (existing.exists()) return; // ya registrado — no sobreescribir
+    await db._sd(docRef, { nick:state.nick, mode, score, date, ts:Date.now() });
     await updatePlayerStats(mode, score, date);
   } catch(e) { console.warn('pushScore:', e); }
+}
+
+// Sincroniza todos los scores del nick desde Firebase → localStorage
+// Evita que se pueda rejugar en otro dispositivo o tras limpiar caché
+async function syncScoresFromFirebase() {
+  if (!db || !state.nick) return;
+  try {
+    const q    = db._q(db._col(db,'scores'), db._w('nick','==',state.nick));
+    const snap = await db._gd(q);
+    snap.forEach(d => {
+      const v = d.data();
+      if (v.date && v.mode && v.score != null) saveScoreForDate(v.date, v.mode, v.score);
+    });
+    state.scores = loadScoresForDate(state.activeDate);
+    updateModeScreen();
+  } catch(e) { console.warn('syncScoresFromFirebase:', e); }
 }
 
 async function updatePlayerStats(mode, score, date) {
