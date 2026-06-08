@@ -2,6 +2,9 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
 <title>Flipend'oh</title>
 <style>
@@ -1536,6 +1539,27 @@ document.getElementById('btn-set-nick').addEventListener('click',function(){
 window.addEventListener('resize',resizeCanvases);
 resizeCanvases(); loadState(); initFirebase();
 if(state.nick) goModes(); else showScreen('screen-nick');
+
+// ─── AUTO-UPDATE CHECK ────────────────────────────────────────────────────
+async function checkForUpdates() {
+  try {
+    const res = await fetch(location.href, { method:'HEAD', cache:'no-store' });
+    const tag  = res.headers.get('etag') || res.headers.get('last-modified');
+    if (!tag) return;
+    const stored = lsGet('flipendoh_etag');
+    if (!stored) { lsSet('flipendoh_etag', tag); return; }
+    if (tag === stored) return;
+    // Nueva versión detectada
+    lsSet('flipendoh_etag', tag);
+    const banner = document.createElement('div');
+    banner.id = 'update-banner';
+    banner.innerHTML = '🔄 Nueva versión disponible &nbsp;<span style="text-decoration:underline;cursor:pointer" onclick="location.reload(true)">ACTUALIZAR</span>';
+    banner.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#e8c547;color:#0f0f14;text-align:center;padding:10px 16px;font-family:Courier New,monospace;font-size:0.78rem;font-weight:bold;z-index:9999;letter-spacing:1px;';
+    document.body.appendChild(banner);
+    setTimeout(() => { location.reload(true); }, 6000); // auto-reload en 6s
+  } catch(e) {}
+}
+setTimeout(checkForUpdates, 2000); // esperar a que cargue antes de chequear
 </script>
 </body>
 </html>
