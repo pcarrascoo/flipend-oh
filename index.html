@@ -1149,12 +1149,16 @@ function changeDate(delta) {
 function computeNormalStreak() {
   try {
     const all = JSON.parse(lsGet(LS_ALL_SCORES)||'{}');
-    let streak = 0, d = state.today;
+    let streak = 0;
+    // Si ya jugaste hoy, incluir hoy en la racha.
+    // Si aún no jugaste, contar desde ayer hacia atrás (racha previa).
+    const todayData = all[state.today];
+    const playedToday = todayData && todayData.normal != null &&
+      (!todayData.normal_playedOn || todayData.normal_playedOn === state.today);
+    let d = playedToday ? state.today : addDays(state.today, -1);
     while (true) {
       const s = all[d];
       if (!s || s.normal == null) break;
-      // Si tiene registro de cuándo se jugó, verificar que fue el día correcto
-      // (jugar un día pasado hoy no cuenta para la racha)
       if (s.normal_playedOn && s.normal_playedOn !== d) break;
       streak++;
       d = addDays(d, -1);
