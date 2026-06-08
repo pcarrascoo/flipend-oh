@@ -629,12 +629,13 @@ function loadScoresForDate(dateStr) {
     return { normal: d.normal??null, extreme: d.extreme??null };
   } catch(e) { return {normal:null, extreme:null}; }
 }
-function saveScoreForDate(dateStr, mode, score) {
+function saveScoreForDate(dateStr, mode, score, playedOn) {
   try {
     const all = JSON.parse(lsGet(LS_ALL_SCORES)||'{}');
     if(!all[dateStr]) all[dateStr]={};
     all[dateStr][mode] = score;
-    all[dateStr][mode+'_playedOn'] = todayStr(); // cuándo se jugó realmente
+    // playedOn: cuándo se jugó realmente. Al sincronizar desde Firebase usar dateStr.
+    all[dateStr][mode+'_playedOn'] = playedOn || todayStr();
     lsSet(LS_ALL_SCORES, JSON.stringify(all));
   } catch(e) {}
 }
@@ -732,7 +733,7 @@ async function initFirebase() {
     db = getFirestore(app);
     db._sd=setDoc; db._gd_doc=getDoc; db._doc=doc;
     db._col=collection; db._q=query; db._gd=getDocs; db._w=where;
-    if (state.nick) syncScoresFromFirebase(); // restaurar scores en nuevo dispositivo
+    if (state.nick) loadPlayerData(state.nick); // cargar data del jugador al iniciar
   } catch(e) { console.warn('Firebase init:', e); }
 }
 
@@ -748,35 +749,41 @@ async function pushScore(mode, score) {
   } catch(e) { console.warn('pushScore:', e); }
 }
 
-// Sincroniza scores Y dibujos del nick desde Firebase → localStorage
-async function syncScoresFromFirebase() {
-  if (!db || !state.nick) return;
+// Carga toda la data del jugador al login:
+// - todos los scores (getDocs por nick)
+// - draws de los últimos 5 días jugados (10 getDoc puntuales por ID)
+async function loadPlayerData(nick) {
+  if (!db || !nick) return;
   try {
-    // Scores
-    const sq   = db._q(db._col(db,'scores'), db._w('nick','==',state.nick));
+    // 1. Scores: todos los de este nick
+    const sq   = db._q(db._col(db,'scores'), db._w('nick','==',nick));
     const snap = await db._gd(sq);
+    const normalDates = [];
     snap.forEach(d => {
       const v = d.data();
-      if (v.date && v.mode && v.score != null) saveScoreForDate(v.date, v.mode, v.score);
-    });
-    // Dibujos — denormalizar a tamaño de canvas del dispositivo actual
-    const dq    = db._q(db._col(db,'draws'), db._w('nick','==',state.nick));
-    const dsnap = await db._gd(dq);
-    const w = drawCanvas.width, h = drawCanvas.height;
-    dsnap.forEach(d => {
-      const v = d.data();
-      if (v.date && v.mode && v.pts) {
-        const localPts = v.pts.map(p => ({ x: p.x*w, y: p.y*h }));
-        saveDrawForDate(v.date, v.mode, localPts);
+      if (v.date && v.mode && v.score != null) {
+        saveScoreForDate(v.date, v.mode, v.score, v.date);
+        if (v.mode === 'normal') normalDates.push(v.date);
       }
     });
-    state.scores    = loadScoresForDate(state.activeDate);
-    state.savedDraws = {
-      normal:  loadDrawForDate(state.activeDate, 'normal'),
-      extreme: loadDrawForDate(state.activeDate, 'extreme')
-    };
+
+    // 2. Draws: últimas 5 fechas con normal, ambos modos
+    const last5 = normalDates.sort().slice(-5);
+    const cw = drawCanvas.width, ch = drawCanvas.height;
+    await Promise.all(['normal','extreme'].flatMap(mode =>
+      last5.map(async date => {
+        try {
+          const s = await db._gd_doc(db._doc(db,'draws',date+'_'+mode+'_'+nick));
+          if (s.exists() && s.data().pts)
+            saveDrawForDate(date, mode, s.data().pts.map(p=>({x:p.x*cw,y:p.y*ch})));
+        } catch(e) {}
+      })
+    ));
+
+    // 3. Refrescar estado de la fecha activa
+    loadActiveDateState(state.activeDate);
     updateModeScreen();
-  } catch(e) { console.warn('syncScoresFromFirebase:', e); }
+  } catch(e) { console.warn('loadPlayerData:', e); }
 }
 
 async function pushDraw(mode) {
@@ -1534,10 +1541,25 @@ function showToast(msg){
 document.getElementById('nick-input').addEventListener('input',function(){
   this.value=this.value.replace(/[^A-Za-z]/g,'').toUpperCase().slice(0,3);
 });
-document.getElementById('btn-set-nick').addEventListener('click',function(){
+document.getElementById('btn-set-nick').addEventListener('click',async function(){
   const val=document.getElementById('nick-input').value.trim().toUpperCase();
   if(val.length<2){showToast('Minimo 2 letras');return;}
-  lsSet(LS_NICK,val); state.nick=val; goModes();
+  lsSet(LS_NICK,val); state.nick=val;
+  // Esperar a que Firebase esté listo y cargar data del jugador
+  this.disabled=true; this.textContent='CARGANDO...';
+  if (db) await loadPlayerData(val);
+  else {
+    // Firebase aún inicializando — esperar hasta 3s
+    await new Promise(res=>{
+      const t=Date.now();
+      const check=setInterval(()=>{
+        if(db||Date.now()-t>3000){clearInterval(check);res();}
+      },100);
+    });
+    if(db) await loadPlayerData(val);
+  }
+  this.disabled=false; this.textContent='JUGAR';
+  goModes();
 });
 
 window.addEventListener('resize',resizeCanvases);
