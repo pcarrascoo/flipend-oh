@@ -460,6 +460,16 @@ function warpPoints(pts, cx, cy, amt, freq, phase) {
   });
 }
 
+// Escalar el shape proporcionalmente si algún punto sale del canvas
+function clampToCanvas(pts, cx, cy, margin) {
+  margin = margin || 6;
+  const limit = Math.min(cx, cy) - margin;
+  const maxD = Math.max(...pts.map(p => Math.max(Math.abs(p.x-cx), Math.abs(p.y-cy))));
+  if (maxD <= limit) return pts;
+  const scale = limit / maxD;
+  return pts.map(p => ({ x: cx + (p.x-cx)*scale, y: cy + (p.y-cy)*scale }));
+}
+
 function drawShape(ctx, pts, color, lw, alpha) {
   if (!pts || pts.length < 2) return;
   ctx.save(); ctx.globalAlpha = alpha||1; ctx.strokeStyle = color||'#5c9ee8';
@@ -503,12 +513,15 @@ function normalizePath(pts) {
   return pts.map(p=>({x:(p.x-(mnX+mxX)/2)/sc, y:(p.y-(mnY+mxY)/2)/sc}));
 }
 function normalizePair(refPts, drawnPts) {
+  // Ref: bounding box center
   let rMnX=Infinity,rMxX=-Infinity,rMnY=Infinity,rMxY=-Infinity;
   refPts.forEach(p=>{rMnX=Math.min(rMnX,p.x);rMxX=Math.max(rMxX,p.x);rMnY=Math.min(rMnY,p.y);rMxY=Math.max(rMxY,p.y);});
   const sc=Math.max(rMxX-rMnX,rMxY-rMnY)||1;
   const rCx=(rMnX+rMxX)/2, rCy=(rMnY+rMxY)/2;
-  let dSx=0,dSy=0; drawnPts.forEach(p=>{dSx+=p.x;dSy+=p.y;});
-  const dCx=dSx/drawnPts.length, dCy=dSy/drawnPts.length;
+  // Drawn: bounding box center (antes usaba centroide → misalignment)
+  let dMnX=Infinity,dMxX=-Infinity,dMnY=Infinity,dMxY=-Infinity;
+  drawnPts.forEach(p=>{dMnX=Math.min(dMnX,p.x);dMxX=Math.max(dMxX,p.x);dMnY=Math.min(dMnY,p.y);dMxY=Math.max(dMxY,p.y);});
+  const dCx=(dMnX+dMxX)/2, dCy=(dMnY+dMxY)/2;
   return {
     normRef:   refPts.map(p=>({x:(p.x-rCx)/sc, y:(p.y-rCy)/sc})),
     normDrawn: drawnPts.map(p=>({x:(p.x-dCx)/sc, y:(p.y-dCy)/sc}))
@@ -869,12 +882,14 @@ async function fetchRanking(mode, dateStr) {
 }
 
 // ─── LIKES ────────────────────────────────────────────────────────────────
+// Los likes se guardan en el mismo doc del score (colección 'scores')
+// para evitar problemas de permisos con nuevas colecciones
 async function fetchLikesForRanking(date, mode, nicks) {
   if (!db) return {};
   const result = {};
   await Promise.all(nicks.map(async nick => {
     try {
-      const snap = await db._gd_doc(db._doc(db,'likes',date+'_'+mode+'_'+nick));
+      const snap = await db._gd_doc(db._doc(db,'scores',date+'_'+mode+'_'+nick));
       result[nick] = snap.exists() ? (snap.data().likers || []) : [];
     } catch(e) { result[nick] = []; }
   }));
@@ -883,15 +898,21 @@ async function fetchLikesForRanking(date, mode, nicks) {
 
 async function toggleLike(date, mode, targetNick) {
   if (!db || targetNick === state.nick) return null;
-  const ref = db._doc(db, 'likes', date+'_'+mode+'_'+targetNick);
+  const ref = db._doc(db, 'scores', date+'_'+mode+'_'+targetNick);
   try {
     const snap = await db._gd_doc(ref);
-    let likers = snap.exists() ? (snap.data().likers || []) : [];
+    if (!snap.exists()) return null; // no hay score para likear
+    const data = snap.data();
+    let likers = data.likers || [];
     const idx = likers.indexOf(state.nick);
     if (idx >= 0) likers.splice(idx, 1); else likers.push(state.nick);
-    await db._sd(ref, { likers });
+    await db._sd(ref, Object.assign({}, data, { likers }));
     return likers;
-  } catch(e) { console.warn('toggleLike:', e); return null; }
+  } catch(e) {
+    console.warn('toggleLike:', e);
+    showToast('Error al guardar ❤️ — ' + (e.code || e.message || ''));
+    return null;
+  }
 }
 
 async function onLikeClick(btn) {
@@ -913,8 +934,8 @@ async function onLikeClick(btn) {
     const liked = likers.includes(state.nick);
     btn.className = 'like-btn'+(liked?' liked':'');
     btn.textContent = '❤️ '+(likers.length||'·');
-    btn.disabled = false;
   }
+  btn.disabled = false; // siempre re-habilitar
 }
 
 // Global ranking: lee todos los scores, filtra por modo client-side
@@ -1181,6 +1202,7 @@ function showSavedResult(mode) {
   const cx = drawCanvas.width/2, cy = drawCanvas.height/2, r = params.size*Math.min(cx,cy);
   state.refPts  = shapePoints(params.shape, cx, cy, r, params.rotation);
   if (params.warpAmt > 0) state.refPts = warpPoints(state.refPts, cx, cy, params.warpAmt, params.warpFreq, params.warpPhase);
+  state.refPts = clampToCanvas(state.refPts, cx, cy);
   state.refPts2 = params.isCombo ? shapePoints(params.shape2, cx, cy, r, params.rotation + 0.4) : null;
   state.drawnPts = state.savedDraws[mode] || [];
   // Fallback: si no hay dibujo local, buscarlo en Firebase
@@ -1207,6 +1229,7 @@ function startMode(mode) {
   const r = state.shapeParams.size * Math.min(cx, cy);
   state.refPts  = shapePoints(state.shapeParams.shape, cx, cy, r, state.shapeParams.rotation);
   if (state.shapeParams.warpAmt > 0) state.refPts = warpPoints(state.refPts, cx, cy, state.shapeParams.warpAmt, state.shapeParams.warpFreq, state.shapeParams.warpPhase);
+  state.refPts = clampToCanvas(state.refPts, cx, cy);
   state.refPts2 = state.shapeParams.isCombo
     ? shapePoints(state.shapeParams.shape2, cx, cy, r, state.shapeParams.rotation + 0.4)
     : null;
@@ -1239,6 +1262,7 @@ function startDrawPhase() {
     : state.shapeParams.rotation;
   state.refPts  = shapePoints(state.shapeParams.shape, cx, cy, r, rot);
   if (state.shapeParams.warpAmt > 0) state.refPts = warpPoints(state.refPts, cx, cy, state.shapeParams.warpAmt, state.shapeParams.warpFreq, state.shapeParams.warpPhase);
+  state.refPts = clampToCanvas(state.refPts, cx, cy);
   state.refPts2 = state.shapeParams.isCombo
     ? shapePoints(state.shapeParams.shape2, cx, cy, r, rot + 0.4)
     : null;
