@@ -558,28 +558,56 @@ function resamplePath(pts, n) {
   }
   return result;
 }
-function scorePaths(refPts, drawnPts) {
-  if (!drawnPts||drawnPts.length<5) return 0;
-  const N=150, TOL=0.20;
-  const pair  = normalizePair(refPts, drawnPts);
-  const ref   = resamplePath(pair.normRef, N);
-  const drawn = resamplePath(pair.normDrawn, N);
+function bboxMaxDim(pts) {
+  if (!pts||pts.length===0) return 0;
+  let mnX=Infinity,mxX=-Infinity,mnY=Infinity,mxY=-Infinity;
+  pts.forEach(p=>{mnX=Math.min(mnX,p.x);mxX=Math.max(mxX,p.x);mnY=Math.min(mnY,p.y);mxY=Math.max(mxY,p.y);});
+  return Math.max(mxX-mnX, mxY-mnY)||0;
+}
+function nnF1(ref, drawn, TOL) {
   let precSum=0;
   for(const dp of drawn){
     let mn=Infinity;
     for(const rp of ref){ const d=Math.hypot(dp.x-rp.x,dp.y-rp.y); if(d<mn){mn=d;if(d<0.005)break;} }
     precSum+=Math.max(0,1-mn/TOL);
   }
-  const precision=precSum/N;
+  const precision=precSum/drawn.length;
   let covSum=0;
   for(const rp of ref){
     let mn=Infinity;
     for(const dp of drawn){ const d=Math.hypot(rp.x-dp.x,rp.y-dp.y); if(d<mn){mn=d;if(d<0.005)break;} }
     covSum+=Math.max(0,1-mn/TOL);
   }
-  const coverage=covSum/N;
+  const coverage=covSum/ref.length;
   if(precision+coverage===0) return 0;
-  return Math.round(2*precision*coverage/(precision+coverage)*100);
+  return 2*precision*coverage/(precision+coverage)*100;
+}
+// ── PUNTAJE 3 FACTORES: forma × tamaño × tinta ─────────────────────────────
+function scorePathsShape(refPts, drawnPts, TOL) {
+  const N=150;
+  const ref   = resamplePath(normalizePath(refPts), N);
+  const drawn = resamplePath(normalizePath(drawnPts), N);
+  return nnF1(ref, drawn, TOL);
+}
+function sizePenalty(ratio, p) {
+  const lo = Math.max(1-p.tol, 1e-6), hi = 1+p.tol;
+  if (ratio >= lo && ratio <= hi) return 1;
+  if (ratio > hi) { const x=(ratio-hi)/p.tauExc; return Math.exp(-Math.pow(x,p.pExc)); }
+  return Math.max(0,ratio)/lo;
+}
+function inkPenalty(ratio, p) {
+  const hi = 1+p.tol;
+  if (ratio <= hi) return 1;
+  const x=(ratio-hi)/p.tauExc; return Math.exp(-Math.pow(x,p.pExc));
+}
+function computeFinalScore(refPts, drawnPts) {
+  if (!drawnPts||drawnPts.length<5) return 0;
+  const forma     = scorePathsShape(refPts, drawnPts, 0.10);
+  const sizeRatio = bboxMaxDim(drawnPts) / (bboxMaxDim(refPts)||1e-9);
+  const sizePen   = sizePenalty(sizeRatio, {tol:0.15, tauExc:0.50, pExc:1.5});
+  const inkRatio  = pathLength(normalizePath(drawnPts)) / (pathLength(normalizePath(refPts))||1e-9);
+  const inkPen    = inkPenalty(inkRatio, {tol:0.15, tauExc:0.40, pExc:1.5});
+  return Math.round(forma*sizePen*inkPen);
 }
 
 // ─── OVERLAY ──────────────────────────────────────────────────────────────
@@ -1313,7 +1341,7 @@ async function submitDraw() {
   document.getElementById('draw-timer-num').textContent='...';
   await new Promise(r=>setTimeout(r,20));
   const refForScore = state.refPts2 ? [...state.refPts, ...state.refPts2] : state.refPts;
-  const score = scorePaths(refForScore, state.drawnPts);
+  const score = computeFinalScore(refForScore, state.drawnPts);
   saveScore(state.currentMode, score);
   showResult(score);           // inmediato — no esperar a Firebase
   pushScore(state.currentMode, score); // background
