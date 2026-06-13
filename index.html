@@ -509,28 +509,6 @@ function distToColor(dist, tol) {
   else          { const s=(t-0.5)*2; r=Math.round(232+(224-232)*s); g=Math.round(197+(92-197)*s); b=Math.round(71+(92-71)*s); }
   return 'rgb('+r+','+g+','+b+')';
 }
-function normalizePath(pts) {
-  if (!pts||pts.length===0) return [];
-  let mnX=Infinity,mxX=-Infinity,mnY=Infinity,mxY=-Infinity;
-  pts.forEach(p=>{mnX=Math.min(mnX,p.x);mxX=Math.max(mxX,p.x);mnY=Math.min(mnY,p.y);mxY=Math.max(mxY,p.y);});
-  const sc=Math.max(mxX-mnX,mxY-mnY)||1;
-  return pts.map(p=>({x:(p.x-(mnX+mxX)/2)/sc, y:(p.y-(mnY+mxY)/2)/sc}));
-}
-function normalizePair(refPts, drawnPts) {
-  // Ref: bounding box center
-  let rMnX=Infinity,rMxX=-Infinity,rMnY=Infinity,rMxY=-Infinity;
-  refPts.forEach(p=>{rMnX=Math.min(rMnX,p.x);rMxX=Math.max(rMxX,p.x);rMnY=Math.min(rMnY,p.y);rMxY=Math.max(rMxY,p.y);});
-  const sc=Math.max(rMxX-rMnX,rMxY-rMnY)||1;
-  const rCx=(rMnX+rMxX)/2, rCy=(rMnY+rMxY)/2;
-  // Drawn: bounding box center (antes usaba centroide → misalignment)
-  let dMnX=Infinity,dMxX=-Infinity,dMnY=Infinity,dMxY=-Infinity;
-  drawnPts.forEach(p=>{dMnX=Math.min(dMnX,p.x);dMxX=Math.max(dMxX,p.x);dMnY=Math.min(dMnY,p.y);dMxY=Math.max(dMxY,p.y);});
-  const dCx=(dMnX+dMxX)/2, dCy=(dMnY+dMxY)/2;
-  return {
-    normRef:   refPts.map(p=>({x:(p.x-rCx)/sc, y:(p.y-rCy)/sc})),
-    normDrawn: drawnPts.map(p=>({x:(p.x-dCx)/sc, y:(p.y-dCy)/sc}))
-  };
-}
 function resamplePath(pts, n) {
   n = n||150;
   if (!pts||pts.length===0) return [];
@@ -564,50 +542,89 @@ function bboxMaxDim(pts) {
   pts.forEach(p=>{mnX=Math.min(mnX,p.x);mxX=Math.max(mxX,p.x);mnY=Math.min(mnY,p.y);mxY=Math.max(mxY,p.y);});
   return Math.max(mxX-mnX, mxY-mnY)||0;
 }
-function nnF1(ref, drawn, TOL) {
-  let precSum=0;
-  for(const dp of drawn){
-    let mn=Infinity;
-    for(const rp of ref){ const d=Math.hypot(dp.x-rp.x,dp.y-rp.y); if(d<mn){mn=d;if(d<0.005)break;} }
-    precSum+=Math.max(0,1-mn/TOL);
-  }
-  const precision=precSum/drawn.length;
-  let covSum=0;
+// ── Cobertura / precisión / score combinado ────────────────────────────────
+function coverageOf(ref, drawn, TOL) {
+  let sum=0;
   for(const rp of ref){
     let mn=Infinity;
-    for(const dp of drawn){ const d=Math.hypot(rp.x-dp.x,rp.y-dp.y); if(d<mn){mn=d;if(d<0.005)break;} }
-    covSum+=Math.max(0,1-mn/TOL);
+    for(const dp of drawn){ const d=Math.hypot(rp.x-dp.x,rp.y-dp.y); if(d<mn){mn=d; if(d<0.5) break;} }
+    sum += Math.max(0,1-mn/TOL);
   }
-  const coverage=covSum/ref.length;
-  if(precision+coverage===0) return 0;
-  return 2*precision*coverage/(precision+coverage)*100;
+  return sum/ref.length;
 }
-// ── PUNTAJE 3 FACTORES: forma × tamaño × tinta ─────────────────────────────
-function scorePathsShape(refPts, drawnPts, TOL) {
-  const N=150;
-  const ref   = resamplePath(normalizePath(refPts), N);
-  const drawn = resamplePath(normalizePath(drawnPts), N);
-  return nnF1(ref, drawn, TOL);
+function precisionOf(ref, drawn, TOL) {
+  let sum=0;
+  for(const dp of drawn){
+    let mn=Infinity;
+    for(const rp of ref){ const d=Math.hypot(dp.x-rp.x,dp.y-rp.y); if(d<mn){mn=d; if(d<0.5) break;} }
+    sum += Math.max(0,1-mn/TOL);
+  }
+  return sum/drawn.length;
 }
-function sizePenalty(ratio, p) {
-  const lo = Math.max(1-p.tol, 1e-6), hi = 1+p.tol;
-  if (ratio >= lo && ratio <= hi) return 1;
-  if (ratio > hi) { const x=(ratio-hi)/p.tauExc; return Math.exp(-Math.pow(x,p.pExc)); }
-  return Math.max(0,ratio)/lo;
+function combinedOf(cov, prec) { return Math.pow(cov,2)*Math.pow(prec,0.5); }
+// Busca la traslación (dx,dy) -- SIN reescalar ni rotar -- que maximiza
+// scoreFn(cov,prec). Grid grueso 25x25 sobre +/-2*figSize, luego grid fino
+// 15x15 alrededor del mejor punto encontrado.
+function unboundedScoreGen(refPts, drawnPts, opts) {
+  opts = opts || {};
+  const tolFrac = opts.tolFrac===undefined ? 0.20 : opts.tolFrac;
+  const scoreFn = opts.scoreFn || combinedOf;
+  const figSize = bboxMaxDim(refPts);
+  const TOL = tolFrac * figSize;
+  const range = 2 * figSize;
+
+  function evalAt(dx,dy){
+    const shifted = drawnPts.map(p=>({x:p.x+dx, y:p.y+dy}));
+    const cov = coverageOf(refPts, shifted, TOL);
+    const prec = precisionOf(refPts, shifted, TOL);
+    return {cov, prec, score: scoreFn(cov,prec)};
+  }
+
+  let best = null;
+  const coarseN = 25;
+  const coarseStep = (2*range)/(coarseN-1);
+  for(let i=0;i<coarseN;i++){
+    for(let j=0;j<coarseN;j++){
+      const dx = -range + i*coarseStep;
+      const dy = -range + j*coarseStep;
+      const r = evalAt(dx,dy);
+      if(!best || r.score>best.score) best = Object.assign({dx,dy},r);
+    }
+  }
+
+  const fineN = 15;
+  const fineRange = coarseStep;
+  const fineStep = (2*fineRange)/(fineN-1);
+  for(let i=0;i<fineN;i++){
+    for(let j=0;j<fineN;j++){
+      const dx = best.dx - fineRange + i*fineStep;
+      const dy = best.dy - fineRange + j*fineStep;
+      const r = evalAt(dx,dy);
+      if(r.score>best.score) best = Object.assign({dx,dy},r);
+    }
+  }
+
+  return Object.assign(best, {TOL, figSize});
 }
-function inkPenalty(ratio, p) {
-  const hi = 1+p.tol;
+// Penaliza exceso de tinta (p.ej. repasar la figura varias veces).
+// Sin castigo hasta 1.5x el largo de la referencia; decae exponencialmente despues.
+function inkPenalty(ratio) {
+  const hi = 1.5;
   if (ratio <= hi) return 1;
-  const x=(ratio-hi)/p.tauExc; return Math.exp(-Math.pow(x,p.pExc));
+  const x = (ratio - hi) / 0.5;
+  return Math.exp(-Math.pow(x, 1.5));
 }
+
 function computeFinalScore(refPts, drawnPts) {
-  if (!drawnPts||drawnPts.length<5) return 0;
-  const forma     = scorePathsShape(refPts, drawnPts, 0.10);
-  const sizeRatio = bboxMaxDim(drawnPts) / (bboxMaxDim(refPts)||1e-9);
-  const sizePen   = sizePenalty(sizeRatio, {tol:0.15, tauExc:0.50, pExc:1.5});
-  const inkRatio  = pathLength(normalizePath(drawnPts)) / (pathLength(normalizePath(refPts))||1e-9);
-  const inkPen    = inkPenalty(inkRatio, {tol:0.15, tauExc:0.40, pExc:1.5});
-  return Math.round(forma*sizePen*inkPen);
+  if (!drawnPts||drawnPts.length<5) return {score:0, fit:null};
+  const N = 150;
+  const refN   = resamplePath(refPts, N);
+  const drawnN = resamplePath(drawnPts, N);
+  const fit = unboundedScoreGen(refN, drawnN, {tolFrac:0.20, scoreFn: combinedOf});
+  const inkRatio = pathLength(drawnPts) / (pathLength(refPts)||1e-9);
+  const inkPen   = inkPenalty(inkRatio);
+  const finalScore = fit.score * inkPen;
+  return { score: Math.round(finalScore*100), fit, inkRatio, inkPen };
 }
 
 // ─── OVERLAY ──────────────────────────────────────────────────────────────
@@ -615,26 +632,50 @@ function renderOverlay() {
   const w=cmpCanvas.width, h=cmpCanvas.height;
   cmpCtx.clearRect(0,0,w,h);
   cmpCtx.fillStyle='#1a1a24'; cmpCtx.fillRect(0,0,w,h);
-  const pad=28, TOL=0.20;
+  const pad=28;
   const refAll = state.refPts2 ? [...state.refPts, ...state.refPts2] : state.refPts;
+
+  function bbox(pts) {
+    let mnX=Infinity,mxX=-Infinity,mnY=Infinity,mxY=-Infinity;
+    pts.forEach(p=>{mnX=Math.min(mnX,p.x);mxX=Math.max(mxX,p.x);mnY=Math.min(mnY,p.y);mxY=Math.max(mxY,p.y);});
+    return {mnX,mxX,mnY,mxY};
+  }
+
   if (!state.drawnPts||state.drawnPts.length<2) {
-    const rn=resamplePath(normalizePath(refAll),250);
-    const sc0=Math.min(w-2*pad,h-2*pad);
-    drawShape(cmpCtx, rn.map(p=>({x:p.x*sc0+w/2,y:p.y*sc0+h/2})),'rgba(160,190,255,0.5)',5);
+    const b = bbox(refAll);
+    const sc0 = Math.min(w-2*pad,h-2*pad) / (Math.max(b.mxX-b.mnX,b.mxY-b.mnY)||1);
+    const cx0=(b.mnX+b.mxX)/2, cy0=(b.mnY+b.mxY)/2;
+    const toC0=p=>({x:(p.x-cx0)*sc0+w/2, y:(p.y-cy0)*sc0+h/2});
+    drawShape(cmpCtx, refAll.map(toC0),'rgba(160,190,255,0.5)',5);
     return;
   }
-  const pair=normalizePair(refAll,state.drawnPts);
-  const refN=resamplePath(pair.normRef,250);
-  const drawnN=pair.normDrawn;
-  const sc=Math.min(w-2*pad,h-2*pad);
-  const toC=p=>({x:p.x*sc+w/2, y:p.y*sc+h/2});
-  drawShape(cmpCtx, refN.map(toC),'rgba(160,190,255,0.18)',7);
-  const drawnC=drawnN.map(toC);
+
+  // Reusa (o calcula si no existe) la posición encontrada por el positioner
+  if (!state.lastFit) {
+    const N=150;
+    const refN0   = resamplePath(refAll, N);
+    const drawnN0 = resamplePath(state.drawnPts, N);
+    state.lastFit = unboundedScoreGen(refN0, drawnN0, {tolFrac:0.20, scoreFn: combinedOf});
+  }
+  const fit = state.lastFit;
+  const shiftedDrawn = state.drawnPts.map(p=>({x:p.x+fit.dx, y:p.y+fit.dy}));
+
+  // Encuadre conjunto: bbox de ref + dibujo reposicionado
+  const bR=bbox(refAll), bD=bbox(shiftedDrawn);
+  const mnX=Math.min(bR.mnX,bD.mnX), mxX=Math.max(bR.mxX,bD.mxX);
+  const mnY=Math.min(bR.mnY,bD.mnY), mxY=Math.max(bR.mxY,bD.mxY);
+  const sc=Math.min(w-2*pad,h-2*pad) / (Math.max(mxX-mnX,mxY-mnY)||1);
+  const cx=(mnX+mxX)/2, cy=(mnY+mxY)/2;
+  const toC=p=>({x:(p.x-cx)*sc+w/2, y:(p.y-cy)*sc+h/2});
+
+  drawShape(cmpCtx, refAll.map(toC),'rgba(160,190,255,0.18)',7);
+  const refN=resamplePath(refAll,150);
+  const drawnC=shiftedDrawn.map(toC);
   for(let i=1;i<drawnC.length;i++){
-    const dn=drawnN[i]; let mn=Infinity;
-    for(const rn of refN){const d=Math.hypot(dn.x-rn.x,dn.y-rn.y);if(d<mn){mn=d;if(d<0.005)break;}}
+    const dp=shiftedDrawn[i]; let mn=Infinity;
+    for(const rp of refN){ const d=Math.hypot(dp.x-rp.x,dp.y-rp.y); if(d<mn){mn=d; if(d<0.5) break;} }
     cmpCtx.beginPath(); cmpCtx.moveTo(drawnC[i-1].x,drawnC[i-1].y); cmpCtx.lineTo(drawnC[i].x,drawnC[i].y);
-    cmpCtx.strokeStyle=distToColor(mn,TOL); cmpCtx.lineWidth=5; cmpCtx.lineCap='round'; cmpCtx.stroke();
+    cmpCtx.strokeStyle=distToColor(mn,fit.TOL); cmpCtx.lineWidth=5; cmpCtx.lineCap='round'; cmpCtx.stroke();
   }
   cmpCtx.font='9px Courier New';
   cmpCtx.fillStyle='#5cb85c'; cmpCtx.textAlign='left';   cmpCtx.fillText('BIEN',pad,h-8);
@@ -725,6 +766,7 @@ let state = {
   refPts2:     null,    // second shape for combo days
   drawTime:    5,       // seconds, calculated from path length
   drawnPts:    [],
+  lastFit:     null,    // {dx,dy,TOL,figSize,cov,prec,score} del último positioner corrido
   scores:      { normal:null, extreme:null },
   savedDraws:  { normal:null, extreme:null },
   rankTab:     'normal',
@@ -1248,6 +1290,7 @@ function showSavedResult(mode) {
   state.refPts = clampToCanvas(state.refPts, cx, cy);
   state.refPts2 = params.isCombo ? shapePoints(params.shape2, cx, cy, r, params.rotation + 0.4) : null;
   state.drawnPts = state.savedDraws[mode] || [];
+  state.lastFit = null;
   // Fallback: si no hay dibujo local, buscarlo en Firebase
   if (!state.drawnPts.length) {
     fetchDrawFromFirebase(mode).then(pts => {
@@ -1276,6 +1319,7 @@ function startMode(mode) {
   state.refPts2 = state.shapeParams.isCombo
     ? shapePoints(state.shapeParams.shape2, cx, cy, r, state.shapeParams.rotation + 0.4)
     : null;
+  state.lastFit = null;
   document.getElementById('mem-mode-label').textContent  = mode==='normal'?'NORMAL':'EXTREMO';
   document.getElementById('draw-mode-label').textContent = mode==='normal'?'NORMAL':'EXTREMO';
   showScreen('screen-memorize');
@@ -1309,6 +1353,7 @@ function startDrawPhase() {
   state.refPts2 = state.shapeParams.isCombo
     ? shapePoints(state.shapeParams.shape2, cx, cy, r, rot + 0.4)
     : null;
+  state.lastFit = null;
   // Draw time scales with path length
   const allRef = state.refPts2 ? [...state.refPts, ...state.refPts2] : state.refPts;
   state.drawTime = calcDrawTime(allRef, state.currentMode);
@@ -1341,7 +1386,9 @@ async function submitDraw() {
   document.getElementById('draw-timer-num').textContent='...';
   await new Promise(r=>setTimeout(r,20));
   const refForScore = state.refPts2 ? [...state.refPts, ...state.refPts2] : state.refPts;
-  const score = computeFinalScore(refForScore, state.drawnPts);
+  const result = computeFinalScore(refForScore, state.drawnPts);
+  state.lastFit = result.fit;
+  const score = result.score;
   saveScore(state.currentMode, score);
   showResult(score);           // inmediato — no esperar a Firebase
   pushScore(state.currentMode, score); // background
