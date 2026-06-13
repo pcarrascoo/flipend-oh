@@ -502,8 +502,8 @@ function calcDrawTime(refPts, mode) {
 }
 
 // ─── SCORING ──────────────────────────────────────────────────────────────
-function distToColor(dist, tol) {
-  const t = Math.min(1, dist/tol);
+function distToColor(dist, tol, wFrac) {
+  const t = 1 - creditOf(dist, tol, wFrac||0);
   let r, g, b;
   if (t < 0.5) { const s=t*2; r=Math.round(92+(232-92)*s); g=Math.round(184+(197-184)*s); b=Math.round(92+(71-92)*s); }
   else          { const s=(t-0.5)*2; r=Math.round(232+(224-232)*s); g=Math.round(197+(92-197)*s); b=Math.round(71+(92-71)*s); }
@@ -543,21 +543,31 @@ function bboxMaxDim(pts) {
   return Math.max(mxX-mnX, mxY-mnY)||0;
 }
 // ── Cobertura / precisión / score combinado ────────────────────────────────
-function coverageOf(ref, drawn, TOL) {
+// "Grosor de línea": dentro de W = WFRAC*TOL del contorno, crédito completo (1).
+// Más allá de TOL, crédito 0. Entre W y TOL, rampa lineal. wFrac=0 reproduce
+// exactamente la fórmula original (max(0,1-d/TOL), sin zona muerta).
+const WFRAC = 0.10;
+function creditOf(d, TOL, wFrac) {
+  const W = (wFrac||0) * TOL;
+  if (d <= W) return 1;
+  const denom = Math.max(TOL - W, 1e-9);
+  return Math.max(0, 1 - (d - W) / denom);
+}
+function coverageOf(ref, drawn, TOL, wFrac) {
   let sum=0;
   for(const rp of ref){
     let mn=Infinity;
     for(const dp of drawn){ const d=Math.hypot(rp.x-dp.x,rp.y-dp.y); if(d<mn){mn=d; if(d<0.5) break;} }
-    sum += Math.max(0,1-mn/TOL);
+    sum += creditOf(mn, TOL, wFrac);
   }
   return sum/ref.length;
 }
-function precisionOf(ref, drawn, TOL) {
+function precisionOf(ref, drawn, TOL, wFrac) {
   let sum=0;
   for(const dp of drawn){
     let mn=Infinity;
     for(const rp of ref){ const d=Math.hypot(dp.x-rp.x,dp.y-rp.y); if(d<mn){mn=d; if(d<0.5) break;} }
-    sum += Math.max(0,1-mn/TOL);
+    sum += creditOf(mn, TOL, wFrac);
   }
   return sum/drawn.length;
 }
@@ -568,6 +578,7 @@ function combinedOf(cov, prec) { return Math.pow(cov,2)*Math.pow(prec,0.5); }
 function unboundedScoreGen(refPts, drawnPts, opts) {
   opts = opts || {};
   const tolFrac = opts.tolFrac===undefined ? 0.20 : opts.tolFrac;
+  const wFrac = opts.wFrac===undefined ? 0 : opts.wFrac;
   const scoreFn = opts.scoreFn || combinedOf;
   const figSize = bboxMaxDim(refPts);
   const TOL = tolFrac * figSize;
@@ -575,8 +586,8 @@ function unboundedScoreGen(refPts, drawnPts, opts) {
 
   function evalAt(dx,dy){
     const shifted = drawnPts.map(p=>({x:p.x+dx, y:p.y+dy}));
-    const cov = coverageOf(refPts, shifted, TOL);
-    const prec = precisionOf(refPts, shifted, TOL);
+    const cov = coverageOf(refPts, shifted, TOL, wFrac);
+    const prec = precisionOf(refPts, shifted, TOL, wFrac);
     return {cov, prec, score: scoreFn(cov,prec)};
   }
 
@@ -604,7 +615,7 @@ function unboundedScoreGen(refPts, drawnPts, opts) {
     }
   }
 
-  return Object.assign(best, {TOL, figSize});
+  return Object.assign(best, {TOL, figSize, wFrac});
 }
 // Penaliza exceso de tinta (p.ej. repasar la figura varias veces).
 // Sin castigo hasta 1.5x el largo de la referencia; decae exponencialmente despues.
@@ -620,10 +631,23 @@ function computeFinalScore(refPts, drawnPts) {
   const N = 150;
   const refN   = resamplePath(refPts, N);
   const drawnN = resamplePath(drawnPts, N);
-  const fit = unboundedScoreGen(refN, drawnN, {tolFrac:0.20, scoreFn: combinedOf});
+  const fit = unboundedScoreGen(refN, drawnN, {tolFrac:0.20, wFrac: WFRAC, scoreFn: combinedOf});
   const inkRatio = pathLength(drawnPts) / (pathLength(refPts)||1e-9);
   const inkPen   = inkPenalty(inkRatio);
   const finalScore = fit.score * inkPen;
+  // Debug readout (solo consola del navegador, no visible al jugador):
+  console.log('[flipendoh debug]', {
+    cov: +(fit.cov*100).toFixed(1),
+    prec: +(fit.prec*100).toFixed(1),
+    score: +(fit.score*100).toFixed(1),
+    wFrac: fit.wFrac,
+    TOL: +fit.TOL.toFixed(1),
+    W: +(fit.wFrac*fit.TOL).toFixed(1),
+    figSize: +fit.figSize.toFixed(1),
+    inkRatio: +inkRatio.toFixed(2),
+    inkPen: +(inkPen*100).toFixed(1),
+    finalScore: Math.round(finalScore*100)
+  });
   return { score: Math.round(finalScore*100), fit, inkRatio, inkPen };
 }
 
@@ -655,7 +679,7 @@ function renderOverlay() {
     const N=150;
     const refN0   = resamplePath(refAll, N);
     const drawnN0 = resamplePath(state.drawnPts, N);
-    state.lastFit = unboundedScoreGen(refN0, drawnN0, {tolFrac:0.20, scoreFn: combinedOf});
+    state.lastFit = unboundedScoreGen(refN0, drawnN0, {tolFrac:0.20, wFrac: WFRAC, scoreFn: combinedOf});
   }
   const fit = state.lastFit;
   const shiftedDrawn = state.drawnPts.map(p=>({x:p.x+fit.dx, y:p.y+fit.dy}));
@@ -675,7 +699,7 @@ function renderOverlay() {
     const dp=shiftedDrawn[i]; let mn=Infinity;
     for(const rp of refN){ const d=Math.hypot(dp.x-rp.x,dp.y-rp.y); if(d<mn){mn=d; if(d<0.5) break;} }
     cmpCtx.beginPath(); cmpCtx.moveTo(drawnC[i-1].x,drawnC[i-1].y); cmpCtx.lineTo(drawnC[i].x,drawnC[i].y);
-    cmpCtx.strokeStyle=distToColor(mn,fit.TOL); cmpCtx.lineWidth=5; cmpCtx.lineCap='round'; cmpCtx.stroke();
+    cmpCtx.strokeStyle=distToColor(mn,fit.TOL,fit.wFrac); cmpCtx.lineWidth=5; cmpCtx.lineCap='round'; cmpCtx.stroke();
   }
   cmpCtx.font='9px Courier New';
   cmpCtx.fillStyle='#5cb85c'; cmpCtx.textAlign='left';   cmpCtx.fillText('BIEN',pad,h-8);
